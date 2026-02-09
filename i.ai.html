@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>i.ai - AI Assistant for GRASS GIS</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        h1 { color: #2c5aa0; border-bottom: 2px solid #2c5aa0; }
+        h2 { color: #2c5aa0; margin-top: 30px; }
+        h3 { color: #333; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        code { background: #f4f4f4; padding: 2px 4px; border-radius: 3px; }
+        .option { background: #e8f4f8; padding: 10px; margin: 10px 0; border-left: 4px solid #2c5aa0; }
+        .example { background: #f9f9f9; padding: 10px; margin: 10px 0; border-left: 4px solid #4caf50; }
+        .warning { background: #fff3cd; padding: 10px; margin: 10px 0; border-left: 4px solid #ffc107; }
+    </style>
+</head>
+<body>
+    <h1>i.ai - AI Assistant for GRASS GIS</h1>
+    
+    <h2>DESCRIPTION</h2>
+    <p>
+        <strong>i.ai</strong> is an AI assistant that integrates Ollama LLM with GRASS GIS for comprehensive geospatial analysis and remote sensing workflows. 
+        It provides intelligent assistance with full knowledge of GRASS GIS modules, GDAL tools, and system utilities.
+    </p>
+    
+    <h2>KEY FEATURES</h2>
+    <ul>
+        <li><strong>AI-Powered Analysis</strong>: Uses Ollama LLM for intelligent geospatial guidance</li>
+        <li><strong>Native GRASS Integration</strong>: Works directly within GRASS GIS environment</li>
+        <li><strong>Comprehensive Module Knowledge</strong>: Knows all GRASS modules (i.*, g.*, r.*, v.*, db.*, t.*, m.*, r3.*, d.*, ps.*)</li>
+        <li><strong>GDAL Tools Integration</strong>: Access to GDAL command-line tools</li>
+        <li><strong>System Tools</strong>: Linux utilities and package management</li>
+        <li><strong>Environment Awareness</strong>: Detects current database, location, mapset, and available maps</li>
+        <li><strong>Command Execution</strong>: Can automatically execute suggested commands</li>
+    </ul>
+    
+    <h2>USAGE</h2>
+    
+    <div class="example">
+        <h3>Basic Usage</h3>
+        <pre><code>i.ai "your question"</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>With Options</h3>
+        <pre><code>i.ai "calculate NDVI" model=llama3.1:latest -e</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>Interactive Mode</h3>
+        <pre><code>i.ai "help me with terrain analysis" -i</code></pre>
+        <p>In interactive mode, type '<strong>i.ai close</strong>' to return to GRASS CLI.</p>
+    </div>
+    
+    <div class="example">
+        <h3>System Information</h3>
+        <pre><code>i.ai "test" -s</code></pre>
+    </div>
+    
+    <h2>OPTIONS</h2>
+    
+    <div class="option">
+        <h3>Parameters</h3>
+        <ul>
+            <li><strong>query</strong>: Your question or task for the AI assistant (required)</li>
+            <li><strong>model</strong>: Ollama model to use (default: llama3.1:latest)</li>
+            <li><strong>ollama_url</strong>: Ollama service URL (default: http://localhost:11434)</li>
+            <li><strong>session</strong>: Continue previous session (session ID)</li>
+        </ul>
+    </div>
+    
+    <div class="option">
+        <h3>Flags</h3>
+        <ul>
+            <li><strong>-e</strong>: Execute suggested GRASS commands automatically</li>
+            <li><strong>-v</strong>: Verbose output</li>
+            <li><strong>-i</strong>: Interactive mode (stay in AI session)</li>
+            <li><strong>-s</strong>: Show system information</li>
+        </ul>
+    </div>
+    
+    <h2>EXAMPLES</h2>
+    
+    <div class="example">
+        <h3>Remote Sensing</h3>
+        <pre><code># Calculate NDVI
+i.ai "calculate NDVI from Sentinel-2 bands"
+
+# Land cover classification
+i.ai "perform supervised classification on satellite image"
+
+# Time series analysis
+i.ai "create vegetation index time series from MODIS data"</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>Terrain Analysis</h3>
+        <pre><code># Basic terrain analysis
+i.ai "calculate slope and aspect from DEM"
+
+# Watershed delineation
+i.ai "delineate watersheds from elevation data"
+
+# Viewshed analysis
+i.ai "perform viewshed analysis from observation points"</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>Data Management</h3>
+        <pre><code># Import data
+i.ai "import GeoTIFF files into GRASS"
+
+# Reprojection
+i.ai "reproject data to UTM zone 33N"
+
+# Export results
+i.ai "export raster maps to GeoTIFF format"</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>With Command Execution</h3>
+        <pre><code># Execute suggested commands automatically
+i.ai "import all GeoTIFF files and create NDVI" -e</code></pre>
+    </div>
+    
+    <h2>REQUIREMENTS</h2>
+    <ul>
+        <li>GRASS GIS 8.0+</li>
+        <li>Ollama service running with a model installed</li>
+        <li>Python 3.8+</li>
+        <li>Internet connection for AI queries</li>
+    </ul>
+    
+    <h2>SETUP</h2>
+    
+    <div class="example">
+        <h3>Install Ollama</h3>
+        <pre><code>curl -fsSL https://ollama.com/install.sh | sh
+ollama serve &
+ollama pull llama3.1:latest</code></pre>
+    </div>
+    
+    <div class="example">
+        <h3>Install Addon</h3>
+        <pre><code># Copy to GRASS addons directory
+cp i.ai.py ~/.grass8/addons/scripts/i.ai
+chmod +x ~/.grass8/addons/scripts/i.ai</code></pre>
+    </div>
+    
+    <h2>SYSTEM CAPABILITIES</h2>
+    
+    <p>i.ai has comprehensive knowledge of:</p>
+    
+    <h3>GRASS GIS Modules (110+ total)</h3>
+    <ul>
+        <li><strong>Imagery (i.*)</strong>: 14 modules for satellite image processing</li>
+        <li><strong>General (g.*)</strong>: 12 modules for data management</li>
+        <li><strong>Raster (r.*)</strong>: 16 modules for raster analysis</li>
+        <li><strong>Vector (v.*)</strong>: 15 modules for vector operations</li>
+        <li><strong>Database (db.*)</strong>: 9 modules for database operations</li>
+        <li><strong>Temporal (t.*)</strong>: 12 modules for time series analysis</li>
+        <li><strong>3D Raster (r3.*)</strong>: 9 modules for volumetric data</li>
+        <li><strong>Display (d.*)</strong>: 10 modules for visualization</li>
+        <li><strong>PostScript (ps.*)</strong>: 5 modules for map output</li>
+    </ul>
+    
+    <h3>GDAL Tools</h3>
+    <ul>
+        <li>Data processing: gdal_translate, gdalwarp, gdalbuildvrt</li>
+        <li>Analysis: gdalinfo, gdaldem, gdal_calc.py</li>
+        <li>Conversion: gdal_rasterize, gdal_polygonize</li>
+    </ul>
+    
+    <h3>System Tools</h3>
+    <ul>
+        <li>Download: wget, curl</li>
+        <li>Package management: apt, apt-cache</li>
+        <li>Text processing: awk, sed, grep</li>
+        <li>Archive: unzip, tar, gzip</li>
+    </ul>
+    
+    <h2>TROUBLESHOOTING</h2>
+    
+    <div class="warning">
+        <h3>Ollama Service Issues</h3>
+        <pre><code># Check if running
+ps aux | grep ollama
+
+# Start service
+ollama serve &
+
+# Check models
+ollama list</code></pre>
+    </div>
+    
+    <div class="warning">
+        <h3>Common Errors</h3>
+        <ul>
+            <li><strong>"This module must be run from within GRASS GIS"</strong>: Start GRASS with <code>grass --text</code></li>
+            <li><strong>"Ollama service is not running"</strong>: Start Ollama service with <code>ollama serve &</code></li>
+            <li><strong>"Model not found"</strong>: Download model with <code>ollama pull llama3.1:latest</code></li>
+        </ul>
+    </div>
+    
+    <h2>AUTHOR</h2>
+    <p>i.ai - AI Assistant for GRASS GIS</p>
+    
+    <h2>SEE ALSO</h2>
+    <ul>
+        <li>GRASS GIS reference manual</li>
+        <li>Ollama documentation</li>
+        <li>GDAL documentation</li>
+    </ul>
+</body>
+</html>
