@@ -172,5 +172,3 @@ ls ~/.grass8*/addons/scripts/
 cp i.ai.py ~/.grass8*/addons/scripts/i.ai
 chmod +x ~/.grass8*/addons/scripts/i.ai
 ```
-
-🌍 **i.ai** - Making geospatial analysis intelligent and accessible within GRASS GIS!
