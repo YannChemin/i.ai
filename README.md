@@ -1,22 +1,22 @@
 # i.ai - AI Assistant for GRASS GIS
 
-🌍 **i.ai** is a native GRASS GIS addon that integrates Ollama LLM with GRASS GIS for comprehensive geospatial analysis and remote sensing workflows.
+**i.ai** is a native GRASS GIS addon that integrates Ollama LLM with GRASS GIS for comprehensive geospatial analysis and remote sensing workflows.
 
 ## Features
 
-- 🤖 **AI-Powered Analysis**: Uses Ollama LLM for intelligent geospatial guidance
-- 🗺️ **Native GRASS Integration**: Works directly within GRASS GIS text environment
-- 🛰️ **Comprehensive Module Knowledge**: Knows all GRASS modules (i.*, g.*, r.*, v.*, db.*, t.*, m.*, r3.*, d.*, ps.*)
-- 🌐 **GDAL Tools Integration**: Access to 24+ GDAL command-line tools
-- 🔧 **System Tools**: Linux utilities and package management (apt-cache)
-- 📊 **Environment Awareness**: Detects current database, location, mapset, and available maps
-- 🔨 **Command Execution**: Can automatically execute suggested commands
+- **AI-Powered Analysis**: Uses Ollama LLM for intelligent geospatial guidance
+- **Native GRASS Integration**: Works directly within GRASS GIS text environment
+- **Comprehensive Module Knowledge**: Knows all GRASS modules (i.*, g.*, r.*, v.*, db.*, t.*, m.*, r3.*, d.*, ps.*)
+- **GDAL Tools Integration**: Access to 24+ GDAL command-line tools
+- **System Tools**: Linux utilities and package management (apt-cache)
+- **Environment Awareness**: Detects current database, location, mapset, and available maps
+- **Command Execution**: Can automatically execute suggested commands
 
 ## Quick Start
 
 ### 1. Install Addon
 ```bash
-make
+make MODULE_TOPDIR=$HOME/dev/grass
 ```
 
 ### 2. Start GRASS GIS
@@ -172,11 +172,5 @@ ls ~/.grass8*/addons/scripts/
 cp i.ai.py ~/.grass8*/addons/scripts/i.ai
 chmod +x ~/.grass8*/addons/scripts/i.ai
 ```
-
-## License
-
-GPL-3.0 License
-
----
 
 🌍 **i.ai** - Making geospatial analysis intelligent and accessible within GRASS GIS!
