@@ -23,10 +23,14 @@ through a validation layer and only run with `-e`.
 ## Install
 
 ```sh
-make MODULE_TOPDIR=$HOME/dev/grass
+make MODULE_TOPDIR=$HOME/dev/grass           # build into the GRASS build tree
+make MODULE_TOPDIR=$HOME/dev/grass install   # install into the GRASS it was built for
 ```
 
-or, from a GRASS session, `g.extension i.ai url=$HOME/dev/i.ai`.
+or, from a GRASS session, `g.extension i.ai url=$HOME/dev/i.ai` (user
+addon). GRASS 8.6 searches its own `scripts` directory before the user
+addons, so an older system-wide `i.ai` would still win over an addon
+install: check with `which i.ai` inside the GRASS shell.
 
 ## Use
 
@@ -42,6 +46,27 @@ i.ai backend=claude -i input=voice voice_host=192.0.2.10 voice_user=yann   # spo
 i.ai operation=info                    # what the assistant sees
 i.ai operation=index                   # cache every tool interface, index manuals
 ```
+
+### Interactive dialog
+
+From the GRASS shell:
+
+```sh
+i.ai -i backend=claude                  # interactive dialog with Claude
+i.ai -i backend=claude model=sonnet     # pick the Claude model
+i.ai -i backend=opencode                # free Big Pickle
+i.ai -i backend=claude input=voice voice_host=<server> voice_user=<login>   # spoken requests
+```
+
+`backend=` chooses the language model service; `model=` picks a model
+within it (`model=claude` alone is refused with a hint to use
+`backend=claude`).
+
+In the dialog, each plan is offered to run, and saying or typing *do it*
+(or *yes*, *run it*, *vas-y*...) runs the last one. The dialog is also a
+GRASS command line: a line starting with a GRASS tool (`d.mon
+start=wx0`) runs directly, and a line starting with `!` runs a shell
+command; both are validated first.
 
 See [i.ai.md](i.ai.md) for the full manual.
 

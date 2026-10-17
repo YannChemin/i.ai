@@ -37,3 +37,9 @@ def test_query_required(session):
 def test_yes_requires_execute(session):
     result = run(session, "query=x", "-y")
     assert result.returncode != 0
+
+
+def test_backend_name_given_as_model(session):
+    result = run(session, "query=x", "model=claude")
+    assert result.returncode != 0
+    assert "backend=claude" in result.stderr

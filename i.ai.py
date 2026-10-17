@@ -224,6 +224,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -252,7 +253,7 @@ class Session:
     def __init__(self, options, need_backend=True):
         from iai_catalog import ModuleCatalog
         from iai_context import ContextManager
-        from iai_llm import BackendError, make_backend
+        from iai_llm import BACKENDS, BackendError, make_backend
         from iai_rag import ManualIndex
         from iai_registry import EntityMatcher, EntityRegistry
         from iai_tools import ToolRegistry
@@ -274,6 +275,16 @@ class Session:
         self.context = ContextManager(self.catalog, self.registry, self.commands)
         self.backend = None
         if need_backend:
+            model = (options["model"] or "").lower()
+            if model in BACKENDS and model != options["backend"]:
+                # model= names a model of the backend, not the backend itself.
+                gs.fatal(
+                    _(
+                        "model={model} names a backend, not a model: use "
+                        "backend={model} (model= then picks one of its models, "
+                        "e.g. backend=claude model=sonnet)"
+                    ).format(model=model)
+                )
             self.backend = make_backend(
                 options["backend"],
                 model=options["model"] or None,
@@ -764,14 +775,49 @@ def read_request(voice, prompt="i.ai> "):
         return text if confirm(_("Send this?")) else ""
 
 
+# Short spoken or typed approvals of the pending plan (English and French).
+AFFIRM = re.compile(
+    r"^(yes|yeah|yep|ok|okay|sure|go|go ahead|do it|do that|run it|run that|"
+    r"run the plan|run this plan|execute|execute it|execute the plan|proceed|"
+    r"start it|open it|please do|oui|vas[ -]y|allez|lance|lance[ -]le|"
+    r"ex[eé]cute|ex[eé]cute[ -]le|fais[ -]le|d'accord)( please| now| it)?$"
+)
+
+
+def is_approval(text):
+    """True when a request only approves the pending plan ("Do it.")."""
+    return bool(AFFIRM.match(re.sub(r"[^\w' -]", "", text.lower()).strip()))
+
+
+def run_direct(session, text, flags):
+    """Run a GRASS command or a !shell line typed in the dialog, validated."""
+    from iai_shell import ShellStep, plan_item, validate_steps
+
+    try:
+        item = ShellStep(text[1:]) if text.startswith("!") else plan_item(text)
+    except ValueError as error:
+        gs.warning(str(error))
+        return
+    result = validate_steps([item], session.validator, session.shell_validator)[0]
+    if not result.valid:
+        gs.warning(
+            _("Not run: {}").format("; ".join(result.errors + result.suggestions))
+        )
+        return
+    execute_plan(session, [result], flags["y"], interactive=True)
+
+
 def interactive_loop(session, flags, output_format, store, session_name, voice=None):
     gs.message(
         _(
-            "i.ai interactive dialog. Commands: /run (execute the last plan), /plan, "
-            "/context, /reset, /exit."
+            "i.ai interactive dialog. Ask in plain words; each plan is offered to run. "
+            "Say or type 'do it' to run the last plan. A line starting with a GRASS "
+            "tool (d.mon start=wx0) runs it directly, a line starting with ! runs a "
+            "shell command. Commands: /run, /plan, /context, /reset, /exit."
         )
     )
     last = None
+    pending = False  # The last plan has not run yet.
     while True:
         try:
             text = read_request(voice)
@@ -788,7 +834,7 @@ def interactive_loop(session, flags, output_format, store, session_name, voice=N
         if text == "/reset":
             session.context.history = []
             session.context.last_plan = []
-            last = None
+            last, pending = None, False
             gs.message(_("Dialog history cleared."))
             continue
         if text == "/plan":
@@ -797,17 +843,25 @@ def interactive_loop(session, flags, output_format, store, session_name, voice=N
             else:
                 gs.message(_("No plan yet."))
             continue
-        if text == "/run":
+        if text == "/run" or (pending and is_approval(text)):
             if last and last.get("plan"):
                 execute_plan(session, last["plan"], flags["y"], interactive=True)
+                pending = False
             else:
                 gs.message(_("No plan to run."))
             continue
+        first = text.split()[0]
+        if text.startswith("!") or session.catalog.exists(first):
+            run_direct(session, text, flags)
+            continue
         result = session.copilot.run(text)
         print_result(result, output_format)
-        last = result if result.get("plan") else last
-        if result.get("plan") and flags["e"] and confirm(_("Run this plan?")):
-            execute_plan(session, result["plan"], flags["y"], interactive=True)
+        if result.get("plan"):
+            last, pending = result, True
+            # The user is at the terminal: every plan is offered to run.
+            if confirm(_("Run this plan?")):
+                execute_plan(session, result["plan"], flags["y"], interactive=True)
+                pending = False
         if session_name:
             store.save(session_name, session.context)
 

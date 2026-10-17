@@ -210,8 +210,18 @@ terms and the session's map names, so they are heard as such.</p>
 conversation can continue across calls. The <strong>format</strong> option prints the
 answer and plan as text (<strong>plain</strong>), the full result as JSON (<strong>json</strong>),
 or the plan as a shell script to review and run later (<strong>shell</strong>).</p>
-<p>The <strong>-i</strong> flag starts an interactive dialog. Its commands are <code>/run</code>
-(execute the last plan), <code>/plan</code>, <code>/context</code>, <code>/reset</code> and <code>/exit</code>.</p>
+<p>The <strong>-i</strong> flag starts an interactive dialog. Requests are asked in plain
+words, typed or spoken. Each plan is offered to run (<em>Run this plan?
+[y/N]</em>), with or without <strong>-e</strong>. A short approval of the pending plan,
+typed or spoken, runs it instead of going back to the model: <em>do it</em>,
+<em>yes</em>, <em>run it</em>, <em>go ahead</em>, and in French <em>vas-y</em>, <em>oui</em>, <em>lance</em>.</p>
+<p>The dialog is also a command line. A line that starts with an installed
+GRASS tool (<code>d.mon start=wx0</code>, <code>r.info map=elevation</code>) runs that command
+directly, and a line that starts with <code>!</code> runs a shell command
+(<code>!gdalinfo data/dem.tif</code>). Both are validated first, like plan steps,
+and steps that change existing data or use the network ask for
+confirmation (or need <strong>-y</strong>). The dialog commands are <code>/run</code> (execute
+the last plan), <code>/plan</code>, <code>/context</code>, <code>/reset</code> and <code>/exit</code>.</p>
 <h3>Operations</h3>
 <ul>
 <li><strong>ask</strong> (default): answer the <strong>query</strong>, plan commands for it, or

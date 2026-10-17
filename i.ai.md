@@ -229,8 +229,19 @@ conversation can continue across calls. The **format** option prints the
 answer and plan as text (**plain**), the full result as JSON (**json**),
 or the plan as a shell script to review and run later (**shell**).
 
-The **-i** flag starts an interactive dialog. Its commands are `/run`
-(execute the last plan), `/plan`, `/context`, `/reset` and `/exit`.
+The **-i** flag starts an interactive dialog. Requests are asked in plain
+words, typed or spoken. Each plan is offered to run (*Run this plan?
+[y/N]*), with or without **-e**. A short approval of the pending plan,
+typed or spoken, runs it instead of going back to the model: *do it*,
+*yes*, *run it*, *go ahead*, and in French *vas-y*, *oui*, *lance*.
+
+The dialog is also a command line. A line that starts with an installed
+GRASS tool (`d.mon start=wx0`, `r.info map=elevation`) runs that command
+directly, and a line that starts with `!` runs a shell command
+(`!gdalinfo data/dem.tif`). Both are validated first, like plan steps,
+and steps that change existing data or use the network ask for
+confirmation (or need **-y**). The dialog commands are `/run` (execute
+the last plan), `/plan`, `/context`, `/reset` and `/exit`.
 
 ### Operations
 
