@@ -68,6 +68,20 @@ GRASS command line: a line starting with a GRASS tool (`d.mon
 start=wx0`) runs directly, and a line starting with `!` runs a shell
 command; both are validated first.
 
+### OpenCode Big Pickle (free, no account)
+
+```sh
+i.ai -i backend=opencode                              # dialog with Big Pickle
+i.ai -i backend=opencode model=opencode/big-pickle    # the same, model named explicitly
+i.ai backend=opencode query="What is the mean elevation of the elevation map?"   # one question
+i.ai -i backend=opencode input=voice voice_host=<server> voice_user=<login>      # spoken requests
+```
+
+Big Pickle is the default model of the `opencode` backend, used through
+the `opencode` command as a guest: no account or login is needed. Each
+model call starts the OpenCode command, so steps are slower than with
+Claude (about 10 to 15 s per call).
+
 See [i.ai.md](i.ai.md) for the full manual.
 
 ## Demos
