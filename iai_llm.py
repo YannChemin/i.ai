@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import urllib.error
 import urllib.request
 
@@ -338,10 +339,15 @@ class OpenCodeBackend(Backend):
                 workdir,
                 "--format",
                 "json",
+                # Errors go to stderr as they happen: a refused request (such
+                # as the guest rate limit) is logged, but opencode keeps running.
+                "--print-logs",
+                "--log-level",
+                "ERROR",
             ]
             if self.url:
                 cmd += ["--attach", self.url]
-            output = _run_cli(cmd, prompt, workdir, self.timeout, "opencode")
+            output = _run_streaming(cmd, prompt, workdir, self.timeout, self.model)
         texts = []
         for line in output.splitlines():
             try:
@@ -388,6 +394,72 @@ def _run_cli(cmd, prompt, workdir, timeout, label):
             )
         )
     return result.stdout
+
+
+OPENCODE_ERROR = re.compile(r'stream error.*?error\.error="([^"]+)"')
+
+
+def _run_streaming(cmd, prompt, workdir, timeout, model):
+    """Run opencode, failing as soon as it logs a model error.
+
+    opencode logs a failed model call (rate limit, unknown model, network)
+    and then waits instead of exiting, so its stderr is read live and the
+    process is stopped at the first stream error.
+    """
+    env = os.environ.copy()
+    env.pop("LD_PRELOAD", None)
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=workdir,
+            env=env,
+        )
+    except OSError as error:
+        raise BackendError("Cannot run opencode: {}".format(error))
+    chunks, errors = [], []
+
+    def read_stdout():
+        chunks.append(process.stdout.read())
+
+    def read_stderr():
+        for line in process.stderr:
+            match = OPENCODE_ERROR.search(line)
+            if match:
+                errors.append(match.group(1))
+                process.terminate()
+
+    readers = [
+        threading.Thread(target=f, daemon=True) for f in (read_stdout, read_stderr)
+    ]
+    for reader in readers:
+        reader.start()
+    try:
+        process.stdin.write(prompt)
+        process.stdin.close()
+    except BrokenPipeError:
+        pass
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise BackendError("opencode did not answer within {} s".format(timeout))
+    for reader in readers:
+        reader.join(timeout=5)
+    if errors:
+        reason = errors[0]
+        if "rate limit" in reason.lower():
+            raise BackendError(
+                "OpenCode refused the request to {}: rate limit exceeded (the free "
+                "guest quota). Try again later, or use another backend such as "
+                "backend=claude.".format(model)
+            )
+        raise BackendError("OpenCode error with {}: {}".format(model, reason))
+    return "".join(chunks)
 
 
 def make_backend(name, model=None, url=None, timeout=300, embed_model=None):

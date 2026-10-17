@@ -80,7 +80,10 @@ i.ai -i backend=opencode input=voice voice_host=<server> voice_user=<login>     
 Big Pickle is the default model of the `opencode` backend, used through
 the `opencode` command as a guest: no account or login is needed. Each
 model call starts the OpenCode command, so steps are slower than with
-Claude (about 10 to 15 s per call).
+Claude (about 10 to 15 s per call). The free guest quota is limited: when
+it is used up, OpenCode refuses the calls ("rate limit exceeded") and
+i.ai says so within seconds; try again later or switch to
+`backend=claude`.
 
 See [i.ai.md](i.ai.md) for the full manual.
 
