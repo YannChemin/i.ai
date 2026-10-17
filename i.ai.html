@@ -1,8 +1,10 @@
 <h2>DESCRIPTION</h2>
 <p><em>i.ai</em> is an AI assistant that works inside the running GRASS session. It
-answers questions about the data, the session, methods and tools, and
-turns tasks into plans of GRASS commands that are validated before
-anything runs.</p>
+answers questions about the data, the session, methods and tools. It
+turns tasks into plans of GRASS commands and command-line steps that are
+validated before anything runs. It also writes complete report pipelines:
+numbered scripts, stored per session, that go from the data to a LaTeX
+report, run end to end, repair their own failing steps and compile the PDF.</p>
 <p>Every GRASS tool installed in the session is available to the assistant.
 This covers core tools and addons, so all of them can be found, read and
 proposed. The tool catalog is read from the live installation
@@ -10,6 +12,11 @@ proposed. The tool catalog is read from the live installation
 <code>$GRASS_ADDON_BASE/scripts</code> and <code>GRASS_ADDON_PATH</code>). Each tool's
 interface comes from its own <code>--interface-description</code>, so the assistant
 uses the parameters, flags and option values of the installed version.</p>
+<p>Every command-line tool on <code>PATH</code> is available as well: GDAL/OGR, LaTeX
+(<em>latexmk</em>, <em>pdflatex</em>, <em>bibtex</em>, <em>biber</em>), Graphviz, ImageMagick, pandoc,
+jq, curl and the rest. They are searched through the man page index
+(<em>apropos</em>, <em>whatis</em>) and described from their man page or <code>--help</code>. The
+prompt also lists the installed Python packages that scripts may import.</p>
 <p>The language model can be:</p>
 <ul>
 <li><strong>ollama</strong>: a local <a href="https://ollama.com">Ollama</a> server;</li>
@@ -26,7 +33,8 @@ uses the parameters, flags and option values of the installed version.</p>
 3D scene control, adapted to GRASS:</p>
 <ol>
 <li>An <em>intent agent</em> classifies each request as a task (execute), a
-   question (query), unclear (clarify), help or chat.</li>
+   question (query), an end-to-end report pipeline (pipeline), unclear
+   (clarify), help or chat.</li>
 <li>Unclear requests go to a <em>clarification agent</em>. It asks what is
    missing and suggests complete requests that use real map names.</li>
 <li>Questions go to a <em>query agent</em>. Tasks go to an <em>execution agent</em>.
@@ -36,6 +44,7 @@ uses the parameters, flags and option values of the installed version.</p>
 <li>Each plan goes through a <em>validation layer</em> (see below). Any errors go
    back to the agent, which fixes the plan, until the plan is valid or the
    step budget (<strong>max_steps</strong>) is spent.</li>
+<li>Pipeline requests go to a <em>pipeline agent</em> (see <em>Report pipelines</em>).</li>
 </ol>
 <p>The read-only tools available to the model are:</p>
 <ul>
@@ -47,7 +56,14 @@ uses the parameters, flags and option values of the installed version.</p>
 <li>read map metadata and the computational region;</li>
 <li>validate a command without running it;</li>
 <li>run read-only commands (statistics, queries, metadata such as
-  <em>r.univar</em> or <em>v.info</em>).</li>
+  <em>r.univar</em> or <em>v.info</em>);</li>
+<li>search the command-line tools and read their manuals;</li>
+<li>run read-only inspection commands without a shell (<em>gdalinfo</em>,
+  <em>ogrinfo</em>, <em>pdfinfo</em>, <em>ncdump</em>, <em>ls</em>, <em>head</em>, <em>find</em>, <em>grep</em>, or any
+  command with <code>--version</code>/<code>--help</code>). Pipes and redirections are refused,
+  and so are paths that may hold credentials (<code>~/.ssh</code>, <code>~/.aws</code>, tokens);</li>
+<li>validate a bash or Python script;</li>
+<li>in report pipelines, list the workspace and look up a DOI at Crossref.</li>
 </ul>
 <p>Read-only commands can run on a raster map's own region through a scoped
 region manager, so the user's computational region never changes. The
@@ -77,16 +93,76 @@ match exists:</p>
   Any tool not known to be read-only and with no declared output also
   counts as <strong>modify</strong>.</li>
 </ul>
+<p>Command-line steps and scripts are validated too. Bash goes through
+<code>bash -n</code> and Python through its parser. Every command a script calls must
+be installed, every Python module it imports must be importable, and the
+GRASS calls inside it are checked like GRASS steps. This covers bash
+lines, <code>grass_run bash -s &lt;&lt;EOF</code> blocks and <code>gs.run_command(...)</code> calls
+with literal arguments. Some patterns are refused outright: <em>sudo</em>,
+recursive removal of <code>/</code>, <code>~</code> or <code>.</code>, piping a download into a shell,
+disk tools, <em>git push</em>, package installs and crontab edits. Scripts also
+get a risk level: <strong>network</strong> for downloads and remote copies, <strong>modify</strong>
+for removals and moves.</p>
 <p>Plans run only with the <strong>-e</strong> flag. Each step is validated again just
-before it runs. A <strong>modify</strong> step needs a <em>yes</em> at the terminal, or the
-<strong>-y</strong> flag; without either, the plan stops before that step. Only GRASS
-tools run, and never through a shell. Interactive tools (such as
-<em>g.gui</em> or <em>d.mon</em>) are refused. <strong>--overwrite</strong> is never added by the
-model; it applies only when the user passes it to <em>i.ai</em>.</p>
+before it runs. A <strong>modify</strong> or <strong>network</strong> step needs a <em>yes</em> at the
+terminal, or the <strong>-y</strong> flag; without either, the plan stops before that
+step. GRASS steps run directly; command-line steps run with <em>bash</em> in the
+session's workspace (or the current directory). Interactive tools (such
+as <em>g.gui</em> or <em>d.mon</em>) are refused. <strong>--overwrite</strong> is never added by the
+model to GRASS steps; it applies only when the user passes it to <em>i.ai</em>.</p>
 <p>The command-line backends cannot touch the session themselves.
 <em>claude</em> runs with all its built-in tools disabled and a JSON schema for
 the reply. <em>opencode</em> runs its read-only <em>plan</em> agent in an empty
 temporary directory, without auto-approved permissions.</p>
+<h3>Report pipelines</h3>
+<p>A pipeline request ("write a report on ...", or <strong>operation=report</strong>)
+produces a report workspace. The workspace is either <strong>workdir</strong> or, for a
+<strong>session</strong>, <code>~/.local/share/i.ai/sessions/&lt;session&gt;/</code>, and is laid out
+like a scripted report:</p>
+<ul>
+<li><code>scripts/00_env.sh</code>: paths, GRASS project and mapset, the study
+  settings shared by every step, <code>grass_run</code> (GRASS tools directly inside
+  a session, through <code>grass ... --exec</code> outside one) and <code>mm</code> (MetaMonitor
+  progress, a no-op without it);</li>
+<li><code>scripts/run_step.sh</code> and <code>scripts/NN_&lt;name&gt;.sh|py</code>: one script per
+  step, from data preparation to figures (Python), diagrams (Graphviz),
+  maps (GRASS display tools, cairo driver) and tables (LaTeX <code>tabular</code>
+  and CSV);</li>
+<li><code>&lt;main&gt;.tex</code> and <code>references.bib</code>: the report. The preamble and title
+  block follow a fixed style; the body is written by the model;</li>
+<li><code>Makefile</code> (<code>make analysis</code>, <code>make step-NN</code>, <code>make report</code>, <code>make</code>),
+  <code>README.md</code> (the run book), <code>figures/</code>, <code>maps/</code>, <code>tables/</code>, <code>data/</code>,
+  <code>logs/</code>, and the manifest <code>.i.ai/pipeline.json</code>.</li>
+</ul>
+<p>The pipeline agent first inspects the data and tools and gives an
+outline: steps, study settings and report sections. It then writes each
+script, and each one must validate before the next is written. Last, it
+writes the report body. The report includes every pipeline output with
+<code>\figorpending</code> and <code>\taborpending</code>, so it compiles before the data
+exist, with a placeholder box for each missing output. The checks on the
+report are:</p>
+<ul>
+<li>every <code>\cite</code> has a BibTeX entry;</li>
+<li>every included file is declared as a step output;</li>
+<li>no shell escapes;</li>
+<li>every DOI exists at Crossref, with a matching title. Entries without a
+  DOI are listed in the README under <em>References to verify</em>.</li>
+</ul>
+<p>A script may overwrite only the GRASS maps that this pipeline created
+(recorded in the manifest), never other existing maps.</p>
+<p>With <strong>-e</strong>, or later with <strong>operation=run -e</strong>, <em>i.ai</em> runs the steps in
+order and logs each one to <code>logs/</code>. It records the GRASS maps each step
+created. When a step fails, a <em>repair agent</em> reads its log, inspects files
+and tools, and rewrites the script, up to <strong>repairs</strong> times. The rewrite is
+validated, and the first version is kept as <code>&lt;script&gt;.orig</code>. After the
+last step, the model rewrites the Executive summary and Results from the
+real outputs (tables, CSV files, logs and the list of figures). The report
+is then compiled with <em>latexmk</em>, and LaTeX errors go back to the model
+for repair. <strong>from_step</strong> restarts a run at a given step.</p>
+<p>A later request in the same session revises the pipeline: unchanged steps
+are kept, and only new or changed steps are rewritten. The report title
+block takes <strong>author</strong> and <strong>contact</strong> (by default from <code>git config</code>),
+<strong>organization</strong> and an optional <strong>classification</strong> banner.</p>
 <h3>Sessions and output</h3>
 <p>With <strong>session</strong>, the dialog history and the last plan are saved under
 <code>$XDG_DATA_HOME/i.ai/sessions/</code> (by default <code>~/.local/share/i.ai/</code>), so a
@@ -97,7 +173,12 @@ or the plan as a shell script to review and run later (<strong>shell</strong>).<
 (execute the last plan), <code>/plan</code>, <code>/context</code>, <code>/reset</code> and <code>/exit</code>.</p>
 <h3>Operations</h3>
 <ul>
-<li><strong>ask</strong> (default): answer the <strong>query</strong>, or plan commands for it.</li>
+<li><strong>ask</strong> (default): answer the <strong>query</strong>, plan commands for it, or
+  write a report pipeline, as the request needs.</li>
+<li><strong>report</strong>: write a report pipeline for the <strong>query</strong>.</li>
+<li><strong>run</strong>: run the stored pipeline (needs <strong>-e</strong>), repair failing steps,
+  write the results into the report and compile it.</li>
+<li><strong>compile</strong>: compile the stored report.</li>
 <li><strong>info</strong>: print the session context that the assistant sees. No model
   is needed.</li>
 <li><strong>index</strong>: read the interface of every installed tool into the cache
@@ -109,6 +190,10 @@ or the plan as a shell script to review and run later (<strong>shell</strong>).<
 <h2>NOTES</h2>
 <p>The answer goes to standard output; messages and progress go to standard
 error. Plan execution reports its progress through <code>G_percent()</code>.</p>
+<p>Pipeline scripts run with the user's own permissions. Validation refuses
+known destructive patterns and asks before network or modifying steps,
+but it is not a sandbox: read the scripts before running a pipeline on
+data that matters, or run it in a separate mapset.</p>
 <p>Small local models often struggle to follow the JSON step protocol.
 Models that are good at tool use give the best plans. When the
 <strong>ollama</strong> backend has no <strong>model</strong>, the first installed model is used.</p>
@@ -130,6 +215,20 @@ i.ai backend=claude session=wake query=&quot;Now keep only basins larger than 1 
 <p>Use an OpenAI-compatible server, here a local llama.cpp server:</p>
 <div class="code"><pre>i.ai backend=openai url=http://localhost:8080/v1 model=qwen3 query=&quot;...&quot;
 </pre></div>
+<p>Write a report pipeline in a dated report folder, run it end to end, and
+compile the PDF:</p>
+<div class="code"><pre>i.ai backend=claude operation=report workdir=~/Documents/LaTex/Report/20261017_Terrain \
+    query=&quot;Terrain analysis report of the elevation map: slope, aspect, streams, maps, figures and tables&quot; -e -y
+</pre></div>
+<p>Run it again later from step 04, after editing a script:</p>
+<div class="code"><pre>i.ai backend=claude workdir=~/Documents/LaTex/Report/20261017_Terrain operation=run from_step=04 -e
+</pre></div>
+<p>The same pipeline runs without <em>i.ai</em>:</p>
+<div class="code"><pre>cd ~/Documents/LaTex/Report/20261017_Terrain &amp;&amp; make
+</pre></div>
+<p>Mix GRASS and command-line steps in a plan:</p>
+<div class="code"><pre>i.ai backend=claude query=&quot;Export the slope map to a Cloud Optimized GeoTIFF and make a 1000 px PNG preview&quot; -e
+</pre></div>
 <p>Show what the assistant sees, and build the caches:</p>
 <div class="code"><pre>i.ai operation=info
 i.ai operation=index
@@ -140,6 +239,9 @@ i.ai operation=index
 <li>One backend: Ollama, an OpenAI-compatible server, the <code>claude</code> command
   (logged in), or the <code>opencode</code> command.</li>
 <li>NumPy, only for the embedding index.</li>
+<li>For report pipelines: a LaTeX installation (<em>latexmk</em> or <em>pdflatex</em>
+  with <em>bibtex</em>) and whatever the steps use (Python with matplotlib,
+  Graphviz).</li>
 </ul>
 <h2>SEE ALSO</h2>
 <p><em><a href="https://grass.osgeo.org/grass-stable/manuals/g.search.modules.html">g.search.modules</a>,
