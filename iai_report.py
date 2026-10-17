@@ -108,9 +108,9 @@ class Workspace:
     def path(self, relative):
         """Return the absolute path of a workspace file; refuse escapes."""
         target = os.path.realpath(os.path.join(self.root, relative))
-        if os.path.commonpath([target, os.path.realpath(self.root)]) != os.path.realpath(
-            self.root
-        ):
+        if os.path.commonpath(
+            [target, os.path.realpath(self.root)]
+        ) != os.path.realpath(self.root):
             raise ValueError("Path <{}> is outside the workspace".format(relative))
         return target
 
@@ -170,7 +170,9 @@ def validate_outline(outline):
             errors.append("Missing '{}'".format(key))
     main = outline.get("main", "")
     if main and not MAIN_NAME.match(main):
-        errors.append("main must be a file stem such as SF_Terrain, not <{}>".format(main))
+        errors.append(
+            "main must be a file stem such as SF_Terrain, not <{}>".format(main)
+        )
     ids = set()
     for step in outline.get("steps") or []:
         sid, name = str(step.get("id", "")), step.get("name", "")
@@ -193,7 +195,9 @@ def validate_outline(outline):
     for item in outline.get("env") or []:
         name = item.get("name", "")
         if not ENV_NAME.match(name) or name in RESERVED_ENV:
-            errors.append("Environment variable <{}> is invalid or reserved".format(name))
+            errors.append(
+                "Environment variable <{}> is invalid or reserved".format(name)
+            )
     return errors
 
 
@@ -202,7 +206,7 @@ def render_env(workspace, outline, context):
     env = context.environment
     lines = [
         "#!/usr/bin/env bash",
-        "# Shared environment of the pipeline \"{}\", written by i.ai.".format(
+        '# Shared environment of the pipeline "{}", written by i.ai.'.format(
             outline["title"].replace('"', "'")
         ),
         '# Source it from every step: source "$(dirname "$0")/00_env.sh"',
@@ -222,7 +226,9 @@ def render_env(workspace, outline, context):
         for item in extra:
             value = str(item.get("value", "")).replace('"', '\\"')
             comment = item.get("comment", "")
-            line = 'export {name}="${{{name}:-{value}}}"'.format(name=item["name"], value=value)
+            line = 'export {name}="${{{name}:-{value}}}"'.format(
+                name=item["name"], value=value
+            )
             lines.append(line + ("  # " + comment if comment else ""))
     lines += [
         "",
@@ -290,7 +296,8 @@ def render_makefile(workspace):
         "# make analysis: every step in order; make step-NN: one step; make: all.",
         "MAIN = {}".format(main),
         "",
-        ".PHONY: all analysis report clean " + " ".join("step-" + s["id"] for s in steps),
+        ".PHONY: all analysis report clean "
+        + " ".join("step-" + s["id"] for s in steps),
         "",
         "all: analysis report",
         "",
@@ -299,7 +306,11 @@ def render_makefile(workspace):
     lines += ["\t" + step_command(workspace, s) for s in steps]
     lines.append("")
     for step in steps:
-        lines += ["step-{}:".format(step["id"]), "\t" + step_command(workspace, step), ""]
+        lines += [
+            "step-{}:".format(step["id"]),
+            "\t" + step_command(workspace, step),
+            "",
+        ]
     lines += [
         "report: $(MAIN).pdf",
         "",
@@ -319,7 +330,8 @@ def render_runbook(workspace):
     for step in workspace.steps():
         rows.append(
             "\\texttt{{{}}} & {} \\\\".format(
-                latex_escape(step_command(workspace, step)), latex_escape(step["purpose"])
+                latex_escape(step_command(workspace, step)),
+                latex_escape(step["purpose"]),
             )
         )
     rows.append("\\texttt{make report} & PDF of this report \\\\")
@@ -361,7 +373,9 @@ def render_readme(workspace, session_name, references):
         "",
         "```sh",
         "i.ai {}operation=run -e".format(
-            "session={} ".format(session_name) if session_name else "workdir={} ".format(workspace.root)
+            "session={} ".format(session_name)
+            if session_name
+            else "workdir={} ".format(workspace.root)
         ),
         "```",
         "",
@@ -530,7 +544,9 @@ def render_tex(workspace, outline, body, meta):
     ]
     if classification:
         rows.append(("Classification", classification))
-    rows += [(m.get("label", ""), m.get("value", "")) for m in outline.get("meta") or []]
+    rows += [
+        (m.get("label", ""), m.get("value", "")) for m in outline.get("meta") or []
+    ]
     prepared = author + (", " + organization if organization else "")
     if prepared:
         rows.append(("Prepared by", prepared))
@@ -549,7 +565,9 @@ def render_tex(workspace, outline, body, meta):
             + latex_escape(classification.upper())
             + "}\\end{center}\n{\\color{warnorange}\\rule{\\linewidth}{3pt}}\n\\vspace{1.2em}\n"
         )
-    head_left = "\\textbf{{{}}}".format(latex_escape(classification)) if classification else ""
+    head_left = (
+        "\\textbf{{{}}}".format(latex_escape(classification)) if classification else ""
+    )
     if organization:
         head_left += (
             " \\textcolor{warnorange}{$\\bullet$} " if head_left else ""
@@ -578,9 +596,15 @@ def render_tex(workspace, outline, body, meta):
 def bib_entries(bibtex):
     """Return (key, title) for every entry of a BibTeX text."""
     entries = []
-    for match in re.finditer(r"@\w+\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n@|\Z)", bibtex, re.DOTALL):
-        title = re.search(r"title\s*=\s*[{\"](.+?)[}\"]\s*,?\s*\n", match.group(2), re.DOTALL)
-        entries.append((match.group(1), re.sub(r"\s+", " ", title.group(1)) if title else ""))
+    for match in re.finditer(
+        r"@\w+\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n@|\Z)", bibtex, re.DOTALL
+    ):
+        title = re.search(
+            r"title\s*=\s*[{\"](.+?)[}\"]\s*,?\s*\n", match.group(2), re.DOTALL
+        )
+        entries.append(
+            (match.group(1), re.sub(r"\s+", " ", title.group(1)) if title else "")
+        )
     return entries
 
 
@@ -592,7 +616,9 @@ def check_report_body(body, bibtex, workspace, outputs):
     errors = []
     if re.search(r"\\(write18|immediate\s*\\write|openout)|\\input\s*\|", body):
         errors.append("Shell escapes and file writes are not allowed in the report")
-    if re.search(r"\\(documentclass|begin\{document\}|end\{document\}|bibliography\{)", body):
+    if re.search(
+        r"\\(documentclass|begin\{document\}|end\{document\}|bibliography\{)", body
+    ):
         errors.append(
             "Give only the body: no \\documentclass, \\begin{document}, "
             "\\end{document} or \\bibliography (i.ai adds them)"
@@ -601,15 +627,22 @@ def check_report_body(body, bibtex, workspace, outputs):
     for group in re.findall(r"\\cite[pt]?\*?(?:\[[^\]]*\])*\{([^}]*)\}", body):
         for key in group.split(","):
             if key.strip() and key.strip() not in keys:
-                errors.append("\\cite{{{}}} has no entry in the BibTeX".format(key.strip()))
-    for command, path in re.findall(r"\\(includegraphics|input)(?:\[[^\]]*\])?\{([^}]+)\}", body):
+                errors.append(
+                    "\\cite{{{}}} has no entry in the BibTeX".format(key.strip())
+                )
+    for command, path in re.findall(
+        r"\\(includegraphics|input)(?:\[[^\]]*\])?\{([^}]+)\}", body
+    ):
         if path == "tables/runbook.tex":
             continue
         exists = os.path.exists(workspace.path(path)) or any(
-            os.path.exists(workspace.path(path + ext)) for ext in (".pdf", ".png", ".tex")
+            os.path.exists(workspace.path(path + ext))
+            for ext in (".pdf", ".png", ".tex")
         )
         if not exists:
-            hint = "\\figorpending" if command == "includegraphics" else "\\taborpending"
+            hint = (
+                "\\figorpending" if command == "includegraphics" else "\\taborpending"
+            )
             errors.append(
                 "\\{}{{{}}}: the file does not exist yet; use {} so the report compiles "
                 "before the pipeline runs".format(command, path, hint)
@@ -630,7 +663,13 @@ def compile_report(workspace, main, timeout=600):
              "-file-line-error", main + ".tex"],
         ]  # fmt: skip
     elif shutil.which("pdflatex"):
-        once = ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error", main]
+        once = [
+            "pdflatex",
+            "-interaction=nonstopmode",
+            "-halt-on-error",
+            "-file-line-error",
+            main,
+        ]
         cmds = [once, ["bibtex", main], once, once]
     else:
         return False, ["No LaTeX installation found (latexmk or pdflatex)"]
@@ -652,7 +691,9 @@ def compile_report(workspace, main, timeout=600):
     log = workspace.read(main + ".log") or ""
     errors = latex_errors(log)
     blg = workspace.read(main + ".blg") or ""
-    errors += [line for line in blg.splitlines() if "I didn't find a database entry" in line]
+    errors += [
+        line for line in blg.splitlines() if "I didn't find a database entry" in line
+    ]
     pdf = workspace.path(main + ".pdf")
     ok = os.path.exists(pdf) and result.returncode == 0 and not errors
     if not errors and result.returncode != 0:
@@ -666,7 +707,7 @@ def latex_errors(log):
     lines = log.splitlines()
     for i, line in enumerate(lines):
         if re.match(r"^(\./)?[^:\s]+\.tex:\d+: ", line) or line.startswith("! "):
-            errors.append(" ".join(l.strip() for l in lines[i : i + 3]))
+            errors.append(" ".join(part.strip() for part in lines[i : i + 3]))
         elif "Citation" in line and "undefined" in line:
             errors.append(line.strip())
         elif re.match(r"^LaTeX Warning: Reference .* undefined", line):

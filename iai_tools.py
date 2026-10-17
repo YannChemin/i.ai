@@ -359,12 +359,16 @@ class ToolRegistry:
 
         doi = re.sub(r"^(https?://(dx\.)?doi\.org/|doi:)", "", doi.strip(), flags=re.I)
         url = "https://api.crossref.org/works/" + urllib.parse.quote(doi)
-        request = urllib.request.Request(url, headers={"User-Agent": "i.ai (GRASS addon)"})
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "i.ai (GRASS addon)"}
+        )
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 item = json.loads(response.read().decode("utf-8"))["message"]
         except Exception as error:  # noqa: BLE001 - reported to the model
-            return "DOI {} not found at Crossref ({}); do not cite it.".format(doi, error)
+            return "DOI {} not found at Crossref ({}); do not cite it.".format(
+                doi, error
+            )
         authors = [
             "{} {}".format(a.get("given", ""), a.get("family", "")).strip()
             for a in item.get("author", [])[:8]

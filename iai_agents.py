@@ -15,9 +15,11 @@ script, report). Every result is validated, and validation errors go back
 to the agent until the result is valid or the step budget is spent.
 """
 
+import datetime
 import difflib
 import json
 import os
+import re
 
 import grass.script as gs
 
@@ -69,7 +71,10 @@ OUTLINE_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"label": {"type": "string"}, "value": {"type": "string"}},
+                "properties": {
+                    "label": {"type": "string"},
+                    "value": {"type": "string"},
+                },
             },
         },
         "env": {
@@ -242,8 +247,7 @@ class IntentAgent(Agent):
 
     def run(self, text):
         system = (
-            ROLE
-            + "\n\nClassify the user's latest message.\n"
+            ROLE + "\n\nClassify the user's latest message.\n"
             "- execute: the user wants something done to data now (import, compute, "
             "classify, export, convert...).\n"
             "- query: the user asks for information, about the data, the session, "
@@ -281,7 +285,9 @@ class ClarificationAgent(Agent):
             "complete requests the user could send instead, using real map names "
             "from the session.\n\nSession:\n" + self.context.for_prompt()
         )
-        prompt = text if not reason else "{}\n\n(Why it is unclear: {})".format(text, reason)
+        prompt = (
+            text if not reason else "{}\n\n(Why it is unclear: {})".format(text, reason)
+        )
         messages = self.context.history[-6:] + [{"role": "user", "content": prompt}]
         result = self.ask(system, messages, CLARIFY_SCHEMA)
         return {
@@ -316,7 +322,9 @@ class LoopAgent(Agent):
             GRASS_RULES,
             extra_rules,
             PROTOCOL.format(
-                actions=", ".join(self.actions), extra=extra, tools=self.tools.describe()
+                actions=", ".join(self.actions),
+                extra=extra,
+                tools=self.tools.describe(),
             ),
             "Session:\n" + self.context.for_prompt(),
         ]
@@ -349,11 +357,18 @@ class LoopAgent(Agent):
                 output = self.tools.call(name, args)
                 self.trace.append({"tool": name, "args": args})
                 messages.append(
-                    {"role": "user", "content": "Result of {}:\n{}".format(name, output)}
+                    {
+                        "role": "user",
+                        "content": "Result of {}:\n{}".format(name, output),
+                    }
                 )
                 continue
             if action == "clarify" and reply.get("questions"):
-                return {"kind": "clarify", "questions": reply["questions"][:3], "suggestions": []}
+                return {
+                    "kind": "clarify",
+                    "questions": reply["questions"][:3],
+                    "suggestions": [],
+                }
             outcome = handle(reply)
             if outcome is not None:
                 status, value = outcome
@@ -409,7 +424,9 @@ class LoopAgent(Agent):
         )
         for i, result in enumerate(results, 1):
             for error in result.errors:
-                errors.append("Step {} ({}): {}".format(i, result.command.module, error))
+                errors.append(
+                    "Step {} ({}): {}".format(i, result.command.module, error)
+                )
             for suggestion in result.suggestions:
                 errors.append("  suggestion: " + suggestion)
         if errors:
@@ -456,7 +473,9 @@ class PipelineAgent(LoopAgent):
         "the figures, maps and tables of the report, and the report sections."
     )
 
-    def __init__(self, backend, context, tools, validator, workspace, meta, max_steps=12):
+    def __init__(
+        self, backend, context, tools, validator, workspace, meta, max_steps=12
+    ):
         super().__init__(backend, context, tools, validator, max_steps)
         self.workspace = workspace
         self.meta = meta
@@ -489,11 +508,17 @@ class PipelineAgent(LoopAgent):
         self.actions = ("tool", "outline", "clarify")
         existing = ""
         if self.workspace.exists:
-            existing = "\n\nThe workspace already has this pipeline; revise it as asked " \
-                "and mark unchanged steps with keep=true:\n" + json.dumps(
-                    {k: self.workspace.manifest.get(k) for k in ("title", "main", "steps", "sections")},
+            existing = (
+                "\n\nThe workspace already has this pipeline; revise it as asked "
+                "and mark unchanged steps with keep=true:\n"
+                + json.dumps(
+                    {
+                        k: self.workspace.manifest.get(k)
+                        for k in ("title", "main", "steps", "sections")
+                    },
                     indent=1,
                 )
+            )
         messages = list(self.context.history) + [
             {"role": "user", "content": text + existing}
         ]
@@ -504,7 +529,9 @@ class PipelineAgent(LoopAgent):
                 return None
             errors = validate_outline(outline)
             if errors:
-                return "retry", "The outline is not valid; fix it:\n" + "\n".join(errors)
+                return "retry", "The outline is not valid; fix it:\n" + "\n".join(
+                    errors
+                )
             return "done", {"kind": "outline", "outline": outline}
 
         result = self.loop(self.system_prompt(), messages, handle_outline)
@@ -537,7 +564,9 @@ class PipelineAgent(LoopAgent):
                 "steps": [],
             }
         )
-        ws.manifest.setdefault("created", __import__("datetime").datetime.now().isoformat(timespec="seconds"))
+        ws.manifest.setdefault(
+            "created", datetime.datetime.now().isoformat(timespec="seconds")
+        )
         planned = set(ws.known_outputs())
         written = []
         total = len(outline["steps"])
@@ -558,7 +587,9 @@ class PipelineAgent(LoopAgent):
                 ws.manifest["steps"].append(step)
                 written.append((step, ws.read(path)))
                 continue
-            gs.message(_("Writing step {n}/{t}: {path}...").format(n=n, t=total, path=path))
+            gs.message(
+                _("Writing step {n}/{t}: {path}...").format(n=n, t=total, path=path)
+            )
             code, check = self.write_step(request, outline, step, written, planned)
             if code is None:
                 return {"kind": "error", "text": check}
@@ -598,14 +629,17 @@ class PipelineAgent(LoopAgent):
     def summary(self, outline, ok, errors):
         ws = self.workspace
         lines = [
-            "Pipeline \"{}\" written to {}".format(outline["title"], ws.root),
+            'Pipeline "{}" written to {}'.format(outline["title"], ws.root),
             "",
             "Steps:",
         ]
         for step in ws.steps():
             lines.append(
                 "  {}  {}  [{}]  {}".format(
-                    step["id"], ws.step_file(step), step.get("risk", "create"), step["purpose"]
+                    step["id"],
+                    ws.step_file(step),
+                    step.get("risk", "create"),
+                    step["purpose"],
                 )
             )
         lines += [
@@ -625,9 +659,7 @@ class PipelineAgent(LoopAgent):
         steps = "\n".join(
             "- {} {} (lang {}, grass {}): {} -> outputs {}".format(
                 s["id"],
-                ws.step_file(
-                    {"id": s["id"], "name": s["name"], "lang": s["lang"]}
-                ),
+                ws.step_file({"id": s["id"], "name": s["name"], "lang": s["lang"]}),
                 s["lang"],
                 bool(s.get("grass")),
                 s.get("purpose", ""),
@@ -676,7 +708,9 @@ class PipelineAgent(LoopAgent):
             )
         )
         task = "Write one step script of a report pipeline."
-        system = "\n\n".join([ROLE, task, GRASS_RULES, SCRIPT_RULES, self._protocol(), self._session()])
+        system = "\n\n".join(
+            [ROLE, task, GRASS_RULES, SCRIPT_RULES, self._protocol(), self._session()]
+        )
         holder = {}
 
         def handle_script(reply):
@@ -692,8 +726,10 @@ class PipelineAgent(LoopAgent):
                 known_outputs=ws.known_outputs() | planned,
             )
             if not check.valid:
-                return "retry", "The script is not valid; fix it and send it whole:\n" + "\n".join(
-                    check.errors
+                return (
+                    "retry",
+                    "The script is not valid; fix it and send it whole:\n"
+                    + "\n".join(check.errors),
                 )
             holder["check"] = check
             return "done", code
@@ -703,7 +739,9 @@ class PipelineAgent(LoopAgent):
             return None, "Step {}: {}".format(step["id"], result.get("text") or result)
         return result, holder["check"]
 
-    def write_report(self, request, outline, current=None, findings=""):
+    def write_report(
+        self, request, outline, current=None, findings="", instruction=None
+    ):
         """Have the model write (or rewrite) the report body until it is valid."""
         from iai_report import bib_entries, check_report_body
 
@@ -713,11 +751,15 @@ class PipelineAgent(LoopAgent):
         for step in ws.steps():
             outputs.update(o for o in step.get("outputs") or [] if "/" in o)
         sections = "\n".join(
-            "- {}: {}".format(s.get("title", ""), s.get("brief", "")) for s in outline["sections"]
+            "- {}: {}".format(s.get("title", ""), s.get("brief", ""))
+            for s in outline["sections"]
         )
         steps = "\n".join(
             "- {} {}: {} -> {}".format(
-                s["id"], ws.step_file(s), s["purpose"], ", ".join(s.get("outputs") or [])
+                s["id"],
+                ws.step_file(s),
+                s["purpose"],
+                ", ".join(s.get("outputs") or []),
             )
             for s in ws.steps()
         )
@@ -732,7 +774,11 @@ class PipelineAgent(LoopAgent):
                 ws.read("scripts/00_env.sh"),
             )
         )
-        if current:
+        if current and instruction:
+            prompt += "\n\nCurrent body:\n{}\n\nCurrent BibTeX:\n{}\n\n{}".format(
+                current["body"], current["bibtex"], instruction
+            )
+        elif current:
             prompt += (
                 "\n\nCurrent body:\n{}\n\nCurrent BibTeX:\n{}\n\nThe pipeline has run. "
                 "Its outputs:\n{}\n\nRewrite the body with the real results: replace the "
@@ -744,7 +790,13 @@ class PipelineAgent(LoopAgent):
         else:
             prompt += "\n\nWrite the report body now."
         system = "\n\n".join(
-            [ROLE, "Write the body of a scientific report in LaTeX.", REPORT_RULES, self._protocol(), self._session()]
+            [
+                ROLE,
+                "Write the body of a scientific report in LaTeX.",
+                REPORT_RULES,
+                self._protocol(),
+                self._session(),
+            ]
         )
         holder = {}
 
@@ -757,13 +809,20 @@ class PipelineAgent(LoopAgent):
             verified, doi_errors = verify_dois(bibtex, self.tools)
             errors += doi_errors
             if errors:
-                return "retry", "The report is not valid; fix it and send body and bibtex again:\n" + "\n".join(
-                    errors
+                return (
+                    "retry",
+                    "The report is not valid; fix it and send body and bibtex again:\n"
+                    + "\n".join(errors),
                 )
             holder["verified"] = verified
             return "done", {"kind": "report", "body": body, "bibtex": bibtex}
 
-        result = self.loop(system, [{"role": "user", "content": prompt}], handle_report, max_steps=self.max_steps + 4)
+        result = self.loop(
+            system,
+            [{"role": "user", "content": prompt}],
+            handle_report,
+            max_steps=self.max_steps + 4,
+        )
         if result.get("kind") == "report":
             result["verified"] = holder.get("verified", set())
             keys = {k for k, _ in bib_entries(result["bibtex"])}
@@ -772,7 +831,9 @@ class PipelineAgent(LoopAgent):
 
     def _protocol(self):
         return PROTOCOL.format(
-            actions=", ".join(self.actions), extra=self.result_lines(), tools=self.tools.describe()
+            actions=", ".join(self.actions),
+            extra=self.result_lines(),
+            tools=self.tools.describe(),
         )
 
     def _session(self):
@@ -786,8 +847,13 @@ class RepairAgent(PipelineAgent):
         """Return a fixed script that validates, or None."""
         self.actions = ("tool", "script")
         ws = self.workspace
-        outline = ws.manifest.get("outline", {"steps": ws.steps(), "title": ws.manifest.get("title", "")})
-        local = [ws.step_file(s) for s in ws.steps()] + ["scripts/run_step.sh", "scripts/00_env.sh"]
+        outline = ws.manifest.get(
+            "outline", {"steps": ws.steps(), "title": ws.manifest.get("title", "")}
+        )
+        local = [ws.step_file(s) for s in ws.steps()] + [
+            "scripts/run_step.sh",
+            "scripts/00_env.sh",
+        ]
         prompt = self._step_context(
             ws.manifest.get("request", ""),
             outline,
@@ -797,7 +863,14 @@ class RepairAgent(PipelineAgent):
             "script.".format(ws.step_file(step), code, log_tail),
         )
         system = "\n\n".join(
-            [ROLE, "Fix a failing step script of a report pipeline.", GRASS_RULES, SCRIPT_RULES, self._protocol(), self._session()]
+            [
+                ROLE,
+                "Fix a failing step script of a report pipeline.",
+                GRASS_RULES,
+                SCRIPT_RULES,
+                self._protocol(),
+                self._session(),
+            ]
         )
 
         def handle_script(reply):
@@ -825,16 +898,20 @@ def verify_dois(bibtex, tools):
 
     :return: (keys whose DOI matched, list of errors)
     """
-    import re
-
     verified, errors = set(), []
-    for match in re.finditer(r"@\w+\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n@|\Z)", bibtex, re.DOTALL):
+    for match in re.finditer(
+        r"@\w+\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n@|\Z)", bibtex, re.DOTALL
+    ):
         key, fields = match.group(1), match.group(2)
         doi = re.search(r"doi\s*=\s*[{\"]([^}\"]+)[}\"]", fields, re.IGNORECASE)
         if not doi:
             continue
         title = re.search(r"\btitle\s*=\s*[{\"](.+?)[}\"]\s*,?\s*\n", fields, re.DOTALL)
-        found = tools.call("check_doi", {"doi": doi.group(1)}) if "check_doi" in tools.tools else ""
+        found = (
+            tools.call("check_doi", {"doi": doi.group(1)})
+            if "check_doi" in tools.tools
+            else ""
+        )
         if not found:
             continue
         try:
@@ -843,13 +920,17 @@ def verify_dois(bibtex, tools):
             errors.append("{}: {}".format(key, found))
             continue
         if title:
-            wanted = re.sub(r"[^a-z0-9 ]", "", re.sub(r"[{}\\]", "", title.group(1)).lower())
+            wanted = re.sub(
+                r"[^a-z0-9 ]", "", re.sub(r"[{}\\]", "", title.group(1)).lower()
+            )
             registered = re.sub(r"[^a-z0-9 ]", "", (record.get("title") or "").lower())
             ratio = difflib.SequenceMatcher(None, wanted, registered).ratio()
             if ratio < 0.8:
                 errors.append(
-                    "{}: DOI {} is registered as \"{}\", not \"{}\"; fix or remove the "
-                    "entry".format(key, doi.group(1), record.get("title"), title.group(1).strip())
+                    '{}: DOI {} is registered as "{}", not "{}"; fix or remove the '
+                    "entry".format(
+                        key, doi.group(1), record.get("title"), title.group(1).strip()
+                    )
                 )
                 continue
         verified.add(key)
@@ -869,7 +950,9 @@ class Copilot:
         self.intent_agent = IntentAgent(backend, context, tools)
         self.clarification_agent = ClarificationAgent(backend, context, tools)
         self.query_agent = QueryAgent(backend, context, tools, validator, max_steps)
-        self.execution_agent = ExecutionAgent(backend, context, tools, validator, max_steps)
+        self.execution_agent = ExecutionAgent(
+            backend, context, tools, validator, max_steps
+        )
         self.workspace_factory = None  # Set by i.ai: returns (Workspace, meta).
 
     def pipeline_agent(self, cls=PipelineAgent):
@@ -949,7 +1032,9 @@ def gather_findings(workspace, max_chars=20000):
             parts.append(chunk)
             used += len(chunk)
     figures = [
-        f for f in workspace.files() if f.startswith(("figures/", "maps/")) and not f.endswith(".dot")
+        f
+        for f in workspace.files()
+        if f.startswith(("figures/", "maps/")) and not f.endswith(".dot")
     ]
     parts.append("### Figures and maps produced\n" + "\n".join(figures))
     for step in workspace.steps():

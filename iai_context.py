@@ -32,9 +32,11 @@ def data_dir():
 class ContextManager:
     """Session snapshot plus dialog history."""
 
-    def __init__(self, catalog, registry):
+    def __init__(self, catalog, registry, commands=None):
         self.catalog = catalog
         self.registry = registry
+        self.commands = commands
+        self.workdir = None
         self.history = []  # dicts: role, content
         self.last_plan = []  # command dicts of the last proposed plan
         self.environment = {}
@@ -147,6 +149,10 @@ class ContextManager:
         addons = self.catalog.addons()
         if addons:
             lines.append("Installed addons: " + ", ".join(addons))
+        if self.commands is not None:
+            lines.append(self.commands.prompt_summary())
+        if self.workdir:
+            lines.append("Report workspace of this session: " + self.workdir)
         return "\n".join(lines)
 
     def summary(self):
@@ -189,7 +195,13 @@ class SessionStore:
             gs.fatal(_("Cannot read session <{}>: {}").format(name, error))
         context.history = data.get("history", [])[-2 * MAX_TURNS :]
         context.last_plan = data.get("last_plan", [])
+        context.workdir = context.workdir or data.get("workdir")
         return True
+
+    def default_workdir(self, name):
+        """Return the default report workspace of a session."""
+        self._path(name)
+        return os.path.join(self.directory, name)
 
     def save(self, name, context):
         path = self._path(name)
@@ -200,6 +212,7 @@ class SessionStore:
             "mapset": context.environment.get("mapset"),
             "history": context.history,
             "last_plan": context.last_plan,
+            "workdir": context.workdir,
         }
         try:
             with open(tmp, "w", encoding="utf-8") as handle:

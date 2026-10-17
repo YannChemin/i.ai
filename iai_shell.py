@@ -257,15 +257,23 @@ def probe(command_line, cwd=None, timeout=60):
         return "Refused: cannot parse the command ({})".format(error)
     if not tokens:
         return "Refused: empty command"
-    if any(t in ("|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "(", ")") for t in tokens):
-        return "Refused: pipes, redirections and command lists are not allowed in probes"
+    if any(
+        t in ("|", "||", "&", "&&", ";", ">", ">>", "<", "<<", "(", ")") for t in tokens
+    ):
+        return (
+            "Refused: pipes, redirections and command lists are not allowed in probes"
+        )
     name = tokens[0]
     args = tokens[1:]
-    version_or_help = args and all(a in ("--version", "-V", "--help", "-h") for a in args)
+    version_or_help = args and all(
+        a in ("--version", "-V", "--help", "-h") for a in args
+    )
     if name not in READ_ONLY_COMMANDS and not version_or_help:
         return (
             "Refused: {} is not a read-only inspection command. Allowed: {}; any "
-            "command with --version or --help.".format(name, ", ".join(sorted(READ_ONLY_COMMANDS)))
+            "command with --version or --help.".format(
+                name, ", ".join(sorted(READ_ONLY_COMMANDS))
+            )
         )
     if name == "find" and FIND_FORBIDDEN & set(args):
         return "Refused: find actions that run or delete are not allowed"
@@ -276,7 +284,9 @@ def probe(command_line, cwd=None, timeout=60):
             return "Refused: {} may hold credentials".format(arg)
     if not shutil.which(name):
         return "Command {} is not installed".format(name)
-    output = _run([name, *[os.path.expanduser(a) for a in args]], timeout=timeout, cwd=cwd)
+    output = _run(
+        [name, *[os.path.expanduser(a) for a in args]], timeout=timeout, cwd=cwd
+    )
     return output or "(no output)"
 
 
@@ -331,7 +341,9 @@ class ShellValidator:
         for pattern, message in FORBIDDEN:
             if pattern.search(shell_text):
                 result.errors.append(message)
-        self._local_files = {os.path.basename(f) for f in local_files} | set(local_files)
+        self._local_files = {os.path.basename(f) for f in local_files} | set(
+            local_files
+        )
         if kind == "python":
             self._check_python(code, result, planned)
         else:
@@ -348,7 +360,9 @@ class ShellValidator:
             for element, name in sorted(result.grass_outputs):
                 if (element, name) in known_outputs or "$" in name:
                     continue
-                if registry.find("{}@{}".format(name, mapset), None if element == "stds" else element):
+                if registry.find(
+                    "{}@{}".format(name, mapset), None if element == "stds" else element
+                ):
                     result.errors.append(
                         "The script writes {} map <{}>, which already exists in mapset "
                         "<{}> and was not created by this pipeline; use a new name".format(
@@ -364,12 +378,28 @@ class ShellValidator:
         if syntax.returncode != 0:
             result.errors.append("bash syntax: " + syntax.stderr.strip()[-600:])
             return
-        functions |= set(re.findall(r"(?m)^\s*(?:function\s+)?([A-Za-z_][\w.-]*)\s*\(\)", code))
+        functions |= set(
+            re.findall(r"(?m)^\s*(?:function\s+)?([A-Za-z_][\w.-]*)\s*\(\)", code)
+        )
         functions |= set(re.findall(r"(?m)^\s*function\s+([A-Za-z_][\w.-]*)", code))
         for line_number, words in _simple_commands(code):
             name = words[0]
-            if name in ("grass_run", "command", "exec", "time", "nice", "nohup",
-                        "env", "timeout", "xargs", "mmrun") and len(words) > 1:
+            if (
+                name
+                in (
+                    "grass_run",
+                    "command",
+                    "exec",
+                    "time",
+                    "nice",
+                    "nohup",
+                    "env",
+                    "timeout",
+                    "xargs",
+                    "mmrun",
+                )
+                and len(words) > 1
+            ):
                 rest, skip = [], False
                 for w in words[1:]:
                     if skip:
@@ -389,7 +419,11 @@ class ShellValidator:
                 words, name = rest, rest[0]
             if name in functions or name in BUILTINS or name in SHELL_WORDS:
                 continue
-            if "$" in name or "`" in name or re.match(r"^[A-Za-z_]\w*(\[.*\])?\+?=", name):
+            if (
+                "$" in name
+                or "`" in name
+                or re.match(r"^[A-Za-z_]\w*(\[.*\])?\+?=", name)
+            ):
                 continue
             if "/" in name:
                 stem = name.replace("$SCRIPTS_DIR/", "scripts/").replace(
@@ -433,18 +467,28 @@ class ShellValidator:
                 params[key] = value
             elif POSITIONAL not in params:
                 params[POSITIONAL] = word
-        if "help" in flags or any(w in ("--help", "--interface-description") for w in words):
+        if "help" in flags or any(
+            w in ("--help", "--interface-description") for w in words
+        ):
             return
-        command = Command(words[0], params, flags if re.match(r"^[a-zA-Z]*$", flags) else "")
+        command = Command(
+            words[0], params, flags if re.match(r"^[a-zA-Z]*$", flags) else ""
+        )
         check = self.grass_validator.validate(command, planned, script_mode=True)
         planned.update(check.outputs)
         result.grass_outputs.update(check.outputs)
         for error in check.errors:
-            result.errors.append("line {} ({}): {}".format(line_number, words[0], error))
+            result.errors.append(
+                "line {} ({}): {}".format(line_number, words[0], error)
+            )
         for warning in check.warnings:
-            result.warnings.append("line {} ({}): {}".format(line_number, words[0], warning))
+            result.warnings.append(
+                "line {} ({}): {}".format(line_number, words[0], warning)
+            )
         for suggestion in check.suggestions:
-            result.warnings.append("line {}: suggestion: {}".format(line_number, suggestion))
+            result.warnings.append(
+                "line {}: suggestion: {}".format(line_number, suggestion)
+            )
 
     def _check_python(self, code, result, planned):
         self._code = code
@@ -470,14 +514,20 @@ class ShellValidator:
                         found = importlib.util.find_spec(top) is not None
                     except (ImportError, ValueError):
                         found = False
-                    if found or top + ".py" in self._local_files or top in self._local_files:
+                    if (
+                        found
+                        or top + ".py" in self._local_files
+                        or top in self._local_files
+                    ):
                         continue
                     message = "line {}: Python module {} is not installed".format(
                         node.lineno, top
                     )
                     if "sys.path" in code:
                         # Found at run time through a path the script adds.
-                        result.warnings.append(message + " (unless on the added sys.path)")
+                        result.warnings.append(
+                            message + " (unless on the added sys.path)"
+                        )
                     else:
                         result.errors.append(message)
             if isinstance(node, ast.Call):
@@ -508,7 +558,11 @@ class ShellValidator:
             and isinstance(node.args[0].elts[0], ast.Constant)
         ):
             command = str(node.args[0].elts[0].value)
-            if "/" not in command and not self.commands.exists(command) and not self.catalog.exists(command):
+            if (
+                "/" not in command
+                and not self.commands.exists(command)
+                and not self.catalog.exists(command)
+            ):
                 result.errors.append(
                     "line {}: command {} is not installed".format(node.lineno, command)
                 )
@@ -519,7 +573,17 @@ class ShellValidator:
         for keyword in node.keywords:
             if keyword.arg is None:
                 return  # **kwargs: cannot check.
-            if keyword.arg in ("overwrite", "quiet", "verbose", "env", "stdout", "stderr", "stdin", "errors", "superquiet"):
+            if keyword.arg in (
+                "overwrite",
+                "quiet",
+                "verbose",
+                "env",
+                "stdout",
+                "stderr",
+                "stdin",
+                "errors",
+                "superquiet",
+            ):
                 continue
             value = keyword.value
             if keyword.arg == "flags":
@@ -541,7 +605,9 @@ class ShellValidator:
         for error in check.errors:
             result.errors.append("line {} ({}): {}".format(node.lineno, module, error))
         for warning in check.warnings:
-            result.warnings.append("line {} ({}): {}".format(node.lineno, module, warning))
+            result.warnings.append(
+                "line {} ({}): {}".format(node.lineno, module, warning)
+            )
 
 
 def _simple_commands(code, offset=0):

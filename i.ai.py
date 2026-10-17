@@ -29,10 +29,10 @@
 # % key: operation
 # % type: string
 # % required: no
-# % options: ask,info,index
+# % options: ask,report,run,compile,info,index
 # % answer: ask
 # % description: What to do
-# % descriptions: ask;Answer the query or plan commands for it;info;Print the session context the assistant sees;index;Cache every tool interface and index the manual pages
+# % descriptions: ask;Answer the query, plan commands, or write a report pipeline, as the request needs;report;Write a report pipeline (scripts and LaTeX report) for the query;run;Run the stored report pipeline, repair failing steps, write the results into the report and compile it;compile;Compile the stored report;info;Print the session context the assistant sees;index;Cache every tool interface and index the manual pages
 # % guisection: Request
 # %end
 
@@ -79,6 +79,62 @@
 # % guisection: Request
 # %end
 
+# %option G_OPT_M_DIR
+# % key: workdir
+# % required: no
+# % description: Report workspace directory (default: the session's directory under ~/.local/share/i.ai/sessions)
+# % guisection: Report
+# %end
+
+# %option
+# % key: from_step
+# % type: string
+# % required: no
+# % description: With operation=run, first pipeline step to run (e.g. 04)
+# % guisection: Report
+# %end
+
+# %option
+# % key: repairs
+# % type: integer
+# % required: no
+# % answer: 2
+# % description: Repair attempts per failing step or LaTeX compilation
+# % guisection: Report
+# %end
+
+# %option
+# % key: author
+# % type: string
+# % required: no
+# % description: Report author (default: git user.name)
+# % guisection: Report
+# %end
+
+# %option
+# % key: contact
+# % type: string
+# % required: no
+# % description: Report contact line (default: git user.email)
+# % guisection: Report
+# %end
+
+# %option
+# % key: organization
+# % type: string
+# % required: no
+# % description: Organization shown in the report header
+# % guisection: Report
+# %end
+
+# %option
+# % key: classification
+# % type: string
+# % required: no
+# % description: Classification banner of the report, e.g. RESTRICTED (none by default)
+# % guisection: Report
+# %end
+
 # %option
 # % key: format
 # % type: string
@@ -110,13 +166,13 @@
 
 # %flag
 # % key: e
-# % description: Execute the validated plan
+# % description: Execute the validated plan, or run the report pipeline
 # % guisection: Execution
 # %end
 
 # %flag
 # % key: y
-# % description: Run plan steps that change existing data or session state without asking
+# % description: Run steps that change existing data, session state or use the network without asking
 # % guisection: Execution
 # %end
 
@@ -132,6 +188,7 @@
 
 import json
 import os
+import subprocess
 import sys
 
 import grass.script as gs
@@ -172,7 +229,13 @@ class Session:
         self.validator = ValidationLayer(
             self.catalog, self.registry, self.matcher, overwrite=gs.overwrite()
         )
-        self.context = ContextManager(self.catalog, self.registry)
+        from iai_shell import CommandCatalog, ShellValidator
+
+        self.commands = CommandCatalog()
+        self.shell_validator = ShellValidator(
+            self.commands, self.catalog, self.validator
+        )
+        self.context = ContextManager(self.catalog, self.registry, self.commands)
         self.backend = None
         if need_backend:
             self.backend = make_backend(
@@ -189,7 +252,13 @@ class Session:
             gs.verbose(_("Language model: {}").format(self.backend.describe()))
         self.manual = ManualIndex(self.backend)
         self.tools = ToolRegistry(
-            self.catalog, self.registry, self.matcher, self.validator, self.manual
+            self.catalog,
+            self.registry,
+            self.matcher,
+            self.validator,
+            self.manual,
+            commands=self.commands,
+            shell_validator=self.shell_validator,
         )
         self.copilot = None
         if need_backend:
@@ -279,14 +348,16 @@ def execute_plan(session, results, assume_yes, interactive):
 
     :return: True when every step ran
     """
-    from iai_validate import Command
+    from iai_shell import ShellStep, plan_item, validate_steps
 
     sys.stdout.flush()  # Show the plan before the tools' own messages.
     commands = [r.command for r in results]
     total = len(commands)
     for n, command in enumerate(commands, 1):
         gs.percent(n - 1, total, 1)
-        check = session.validator.validate(Command.from_any(command.to_dict()))
+        check = validate_steps(
+            [plan_item(command.to_dict())], session.validator, session.shell_validator
+        )[0]
         if not check.valid:
             gs.warning(
                 _("Step {n} <{cmd}> is no longer valid: {err}").format(
@@ -294,11 +365,16 @@ def execute_plan(session, results, assume_yes, interactive):
                 )
             )
             return False
-        if check.risk == "modify" and not assume_yes:
+        if check.risk in ("modify", "network") and not assume_yes:
+            what = (
+                _("uses the network")
+                if check.risk == "network"
+                else _("changes existing data or session state")
+            )
             if not confirm(
-                _(
-                    "Step {n} changes existing data or session state:\n  {cmd}\nRun it?"
-                ).format(n=n, cmd=command.shell())
+                _("Step {n} {what}:\n  {cmd}\nRun it?").format(
+                    n=n, what=what, cmd=command.shell()
+                )
             ):
                 gs.warning(
                     _(
@@ -312,6 +388,21 @@ def execute_plan(session, results, assume_yes, interactive):
                 n=n, total=total, cmd=command.shell()
             )
         )
+        if isinstance(command, ShellStep):
+            cwd = session.context.workdir or os.getcwd()
+            returncode = subprocess.run(
+                ["bash", "-c", command.line], cwd=cwd, check=False
+            ).returncode
+            if returncode != 0:
+                message = _("Step {n} <{cmd}> failed with exit code {rc}").format(
+                    n=n, cmd=command.shell(), rc=returncode
+                )
+                if interactive:
+                    gs.warning(message)
+                    return False
+                gs.fatal(message)
+            session.registry.refresh()
+            continue
         kwargs = dict(command.params)
         if command.flags:
             kwargs["flags"] = command.flags
@@ -329,6 +420,212 @@ def execute_plan(session, results, assume_yes, interactive):
     gs.percent(1, 1, 1)
     session.context.refresh()
     return True
+
+
+def open_workspace(session, options, store, create):
+    """Return the report workspace of this run, or fail with guidance."""
+    from iai_report import Workspace
+
+    workdir = options["workdir"] or session.context.workdir
+    if not workdir and options["session"]:
+        workdir = store.default_workdir(options["session"])
+    if not workdir:
+        gs.fatal(
+            _(
+                "Report pipelines are stored per session: give session=<name> or workdir=<dir>"
+            )
+        )
+    workspace = Workspace(workdir)
+    if not create and not workspace.exists:
+        gs.fatal(_("No report pipeline in <{}>").format(workspace.root))
+    session.context.workdir = workspace.root
+    return workspace
+
+
+def report_meta(options):
+    from iai_report import default_author
+
+    name, email = default_author()
+    return {
+        "author": options["author"] or name,
+        "contact": options["contact"] or email,
+        "organization": options["organization"],
+        "classification": options["classification"],
+        "session": options["session"],
+    }
+
+
+def run_pipeline(session, workspace, options, flags):
+    """Run the stored pipeline step by step, repairing failing steps.
+
+    :return: True when every step succeeded
+    """
+    from iai_agents import RepairAgent
+    from iai_report import run_step
+
+    steps = workspace.steps()
+    start = options["from_step"]
+    if start:
+        ids = [s["id"] for s in steps]
+        if start not in ids:
+            gs.fatal(_("No step <{}>; steps: {}").format(start, ", ".join(ids)))
+        steps = steps[ids.index(start) :]
+    repairs = int(options["repairs"])
+    repairer = None
+    if session.copilot is not None and repairs > 0:
+        repairer = session.copilot.pipeline_agent(RepairAgent)
+    local = [workspace.step_file(s) for s in workspace.steps()] + [
+        "scripts/run_step.sh",
+        "scripts/00_env.sh",
+    ]
+    planned = set(workspace.known_outputs())
+    total = len(steps)
+    sys.stdout.flush()
+    for n, step in enumerate(steps, 1):
+        gs.percent(n - 1, total, 1)
+        path = workspace.step_file(step)
+        attempt = 0
+        while True:
+            code = workspace.read(path)
+            if code is None:
+                gs.fatal(_("Step script <{}> is missing").format(path))
+            check = session.shell_validator.check(
+                code,
+                step["lang"],
+                functions=("grass_run", "mm"),
+                planned=set(planned),
+                local_files=local,
+                known_outputs=workspace.known_outputs() | planned,
+            )
+            if check.valid and not confirm_risk(check.risk, path, flags):
+                workspace.save_manifest()
+                return False
+            if check.valid:
+                gs.message(_("Step {n}/{t}: {path}...").format(n=n, t=total, path=path))
+                returncode, tail = run_step(workspace, step)
+            else:
+                returncode, tail = -1, "Validation failed:\n" + "\n".join(check.errors)
+            session.registry.refresh()
+            if returncode == 0:
+                planned.update(check.grass_outputs)
+                workspace.record_outputs(check.grass_outputs)
+                step["status"] = "done"
+                break
+            step["status"] = "failed"
+            gs.warning(
+                _("Step {id} failed:\n{tail}").format(
+                    id=step["id"], tail="\n".join(tail.splitlines()[-12:])
+                )
+            )
+            attempt += 1
+            if repairer is None or attempt > repairs:
+                workspace.save_manifest()
+                gs.warning(
+                    _("Stopped at step {id}; log in {log}").format(
+                        id=step["id"],
+                        log=workspace.path(
+                            "logs/{}_{}.log".format(step["id"], step["name"])
+                        ),
+                    )
+                )
+                return False
+            gs.message(
+                _("Repairing step {id} (attempt {a} of {r})...").format(
+                    id=step["id"], a=attempt, r=repairs
+                )
+            )
+            fixed = repairer.repair_step(step, code, tail, planned)
+            if fixed is None:
+                workspace.save_manifest()
+                gs.warning(_("No valid repair for step {}").format(step["id"]))
+                return False
+            if attempt == 1:
+                workspace.write(path + ".orig", code)  # The script before repairs.
+            workspace.write(path, fixed, executable=True)
+        workspace.save_manifest()
+    gs.percent(1, 1, 1)
+    session.context.refresh()
+    return True
+
+
+def confirm_risk(risk, path, flags):
+    """Ask before a step that modifies existing data or uses the network."""
+    if risk not in ("modify", "network") or flags["y"]:
+        return True
+    what = (
+        _("uses the network")
+        if risk == "network"
+        else _("removes or changes existing data")
+    )
+    if confirm(_("{path} {what}. Run it?").format(path=path, what=what)):
+        return True
+    gs.warning(
+        _("Stopped before {path}; run i.ai with -y to allow steps that {what}.").format(
+            path=path, what=what
+        )
+    )
+    return False
+
+
+def finalize_report(session, workspace, options, results_pass=True):
+    """Write the results into the report and compile it, repairing LaTeX errors."""
+    import re
+
+    from iai_agents import gather_findings
+    from iai_report import compile_report, render_tex
+
+    manifest = workspace.manifest
+    main = manifest["main"]
+    agent = None
+    if session.copilot is not None:
+        agent = session.copilot.pipeline_agent()
+    tex = workspace.read(main + ".tex") or ""
+    match = re.search(r"% BODY START\n(.*)\n% BODY END", tex, re.DOTALL)
+    current = {
+        "body": match.group(1) if match else "",
+        "bibtex": workspace.read("references.bib") or "",
+    }
+    meta = report_meta(options)
+    outline = manifest.get(
+        "outline", {"title": manifest["title"], "main": main, "sections": []}
+    )
+    if agent is not None and results_pass and match:
+        gs.message(_("Writing the results into the report..."))
+        report = agent.write_report(
+            manifest.get("request", ""), outline, current, gather_findings(workspace)
+        )
+        if report.get("kind") == "report":
+            current = {"body": report["body"], "bibtex": report["bibtex"]}
+            render_tex(workspace, outline, current["body"], meta)
+            workspace.write("references.bib", current["bibtex"])
+        else:
+            gs.warning(_("Results not written: {}").format(report.get("text")))
+    gs.message(_("Compiling {}.tex...").format(main))
+    ok, errors = compile_report(workspace, main)
+    attempt = 0
+    while not ok and agent is not None and match and attempt < int(options["repairs"]):
+        attempt += 1
+        gs.message(_("Repairing LaTeX errors (attempt {})...").format(attempt))
+        report = agent.write_report(
+            manifest.get("request", ""),
+            outline,
+            current,
+            instruction="LaTeX fails with these errors; fix the body and BibTeX, change "
+            "nothing else:\n" + "\n".join(errors),
+        )
+        if report.get("kind") != "report":
+            break
+        current = {"body": report["body"], "bibtex": report["bibtex"]}
+        render_tex(workspace, outline, current["body"], meta)
+        workspace.write("references.bib", current["bibtex"])
+        ok, errors = compile_report(workspace, main)
+    manifest["report"] = {"compiled": ok, "errors": errors}
+    workspace.save_manifest()
+    if ok:
+        gs.message(_("Report: {}").format(workspace.path(main + ".pdf")))
+    else:
+        gs.warning(_("The report does not compile:\n{}").format("\n".join(errors)))
+    return ok
 
 
 def run_index(session, options):
@@ -403,7 +700,7 @@ def interactive_loop(session, flags, output_format, store, session_name):
         last = result if result.get("plan") else last
         if result.get("plan") and flags["e"] and confirm(_("Run this plan?")):
             execute_plan(session, result["plan"], flags["y"], interactive=True)
-        if store:
+        if session_name:
             store.save(session_name, session.context)
 
 
@@ -430,18 +727,57 @@ def main():
         run_index(session, options)
         return
 
+    store = SessionStore()
+
+    if operation in ("run", "compile"):
+        session = Session(
+            options, need_backend=operation == "run" and int(options["repairs"]) > 0
+        )
+        if options["session"]:
+            store.load(options["session"], session.context)
+        workspace = open_workspace(session, options, store, create=False)
+        if session.copilot is not None:
+            session.copilot.workspace_factory = lambda: (
+                workspace,
+                report_meta(options),
+            )
+        ok = True
+        if operation == "run":
+            if not flags["e"]:
+                gs.fatal(_("operation=run executes the pipeline scripts: add -e"))
+            ok = run_pipeline(session, workspace, options, flags)
+        if ok:
+            ok = finalize_report(
+                session, workspace, options, results_pass=operation == "run"
+            )
+        if options["session"]:
+            store.save(options["session"], session.context)
+        session.catalog.save()
+        return 0 if ok else 1
+
     if not options["query"] and not flags["i"]:
         gs.fatal(_("Give a query, or use -i for an interactive dialog"))
 
     session = Session(options)
-    store = SessionStore() if options["session"] else None
-    if store and store.load(options["session"], session.context):
+    if options["session"] and store.load(options["session"], session.context):
         gs.verbose(_("Continuing session <{}>").format(options["session"]))
+    if options["session"] or options["workdir"]:
+        workspace_cache = {}
+
+        def factory():
+            if "ws" not in workspace_cache:
+                workspace_cache["ws"] = open_workspace(
+                    session, options, store, create=True
+                )
+            return workspace_cache["ws"], report_meta(options)
+
+        session.copilot.workspace_factory = factory
 
     if options["query"]:
-        result = session.copilot.run(options["query"])
+        intent = "pipeline" if operation == "report" else None
+        result = session.copilot.run(options["query"], intent=intent)
         print_result(result, output_format)
-        if store:
+        if options["session"]:
             store.save(options["session"], session.context)
         if result["kind"] == "error" and not flags["i"]:
             sys.exit(1)
@@ -449,6 +785,12 @@ def main():
             execute_plan(session, result["plan"], flags["y"], interactive=flags["i"])
         elif result.get("plan") and not flags["i"]:
             gs.message(_("Nothing was run; add -e to execute the plan."))
+        if result["kind"] == "pipeline" and flags["e"]:
+            workspace = session.copilot.workspace_factory()[0]
+            if run_pipeline(session, workspace, options, flags):
+                finalize_report(session, workspace, options)
+            if options["session"]:
+                store.save(options["session"], session.context)
 
     if flags["i"]:
         interactive_loop(session, flags, output_format, store, options["session"])
