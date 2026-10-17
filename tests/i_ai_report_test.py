@@ -98,7 +98,9 @@ class ScriptedBackend(Backend):
 
 
 def load_main():
-    spec = importlib.util.spec_from_file_location("i_ai_main", os.path.join(ADDON_DIR, "i.ai.py"))
+    spec = importlib.util.spec_from_file_location(
+        "i_ai_main", os.path.join(ADDON_DIR, "i.ai.py")
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -133,7 +135,13 @@ def test_pipeline_end_to_end(parts, tmp_path):
     )  # fmt: skip
     copilot = Copilot(backend, context, tools, validator)
     workspace = Workspace(tmp_path / "report")
-    meta = {"author": "Tester", "contact": "", "organization": "", "classification": "", "session": None}
+    meta = {
+        "author": "Tester",
+        "contact": "",
+        "organization": "",
+        "classification": "",
+        "session": None,
+    }
     copilot.workspace_factory = lambda: (workspace, meta)
 
     result = copilot.run("Write a terrain report", intent="pipeline")
@@ -187,3 +195,59 @@ def test_report_body_checks(tmp_path):
     assert any("figorpending" in e for e in errors)
     assert any("nokey" in e for e in errors)
     assert any("Shell escapes" in e for e in errors)
+
+
+def test_interrupted_build_resumes(parts, tmp_path):
+    """A backend failure mid-build keeps the written steps; a rerun resumes."""
+    from iai_agents import Copilot
+    from iai_context import ContextManager
+    from iai_llm import BackendError
+    from iai_rag import ManualIndex
+    from iai_report import Workspace
+    from iai_shell import CommandCatalog, ShellValidator
+    from iai_tools import ToolRegistry
+
+    class LimitedBackend(ScriptedBackend):
+        def complete_json(self, system, messages, schema):
+            if not self.replies:
+                raise BackendError("Claude Code error: You've hit your session limit")
+            return super().complete_json(system, messages, schema)
+
+    catalog, registry, matcher, validator = parts
+    commands = CommandCatalog()
+    shell_validator = ShellValidator(commands, catalog, validator)
+    context = ContextManager(catalog, registry, commands)
+    tools = ToolRegistry(
+        catalog, registry, matcher, validator, ManualIndex(),
+        commands=commands, shell_validator=shell_validator,
+    )  # fmt: skip
+    workspace = Workspace(tmp_path / "report")
+    meta = {
+        "author": "",
+        "contact": "",
+        "organization": "",
+        "classification": "",
+        "session": None,
+    }
+    # Own map name: the end-to-end test already created elev_scaled.
+    step1 = STEP1.replace("elev_scaled", "elev_resume")
+    backend = LimitedBackend([OUTLINE, {"action": "script", "code": step1}])
+    copilot = Copilot(backend, context, tools, validator)
+    copilot.workspace_factory = lambda: (workspace, meta)
+    first = copilot.run("Write a terrain report", intent="pipeline")
+    assert first["kind"] == "error" and "session limit" in first["text"]
+    saved = Workspace(tmp_path / "report")
+    assert saved.manifest["partial"] and [s["id"] for s in saved.steps()] == ["01"]
+
+    # The rerun asks only for what is missing: step 02 and the report.
+    backend.replies = [
+        {"action": "script", "code": STEP2_FIXED},
+        {"action": "report", "body": BODY, "bibtex": ""},
+    ]
+    workspace.manifest = saved.manifest
+    second = Copilot(backend, context, tools, validator)
+    second.workspace_factory = lambda: (workspace, meta)
+    result = second.run("Write a terrain report", intent="pipeline")
+    assert result["kind"] == "pipeline", result
+    assert [s["id"] for s in workspace.steps()] == ["01", "02"]
+    assert workspace.manifest["partial"] is False

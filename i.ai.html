@@ -163,6 +163,40 @@ for repair. <strong>from_step</strong> restarts a run at a given step.</p>
 are kept, and only new or changed steps are rewritten. The report title
 block takes <strong>author</strong> and <strong>contact</strong> (by default from <code>git config</code>),
 <strong>organization</strong> and an optional <strong>classification</strong> banner.</p>
+<h3>Voice input</h3>
+<p>By default, requests are typed. With <strong>input=voice</strong>, they can also be
+spoken into the PC microphone. In the dialog (<strong>-i</strong>), an empty line
+(Enter) starts recording and Enter stops it. Without <strong>-i</strong> and without
+<strong>query</strong>, one spoken request is taken. The transcription is put on the
+<code>i.ai&gt;</code> prompt line, where it can be edited before Enter sends it. Typed
+lines and <code>/commands</code> still work.</p>
+<p>Speech is recorded with PipeWire (<em>pw-record</em>, the Debian 13 default;
+<em>arecord</em> otherwise) as 16 kHz mono WAV, and transcribed by whisper.cpp
+with the large-v3 model on a GPU, never on a CPU. The recording is
+deleted after transcription and nothing is stored on the GPU machine.
+Transcription runs:</p>
+<ul>
+<li>by default on this machine, when the GPU search finds a GPU and a
+  whisper.cpp build with a GPU backend;</li>
+<li>on a GPU server given by <strong>voice_host</strong> (IP address or name) and
+  <strong>voice_user</strong> (login name; key-based ssh login is required). The
+  defaults can be set once in the environment variables <code>IAI_VOICE_HOST</code>
+  and <code>IAI_VOICE_USER</code>.</li>
+</ul>
+<p>The GPU search looks for:</p>
+<ol>
+<li>GPU hardware (<em>lspci</em>, <code>/dev/dri/renderD*</code>, <code>/dev/kfd</code>, <em>nvidia-smi</em>);</li>
+<li>a <em>whisper-server</em> linked to a GPU backend of ggml (Vulkan, CUDA, HIP,
+   OpenCL, SYCL, Metal, MUSA), in <code>PATH</code>, <code>~/dev/whisper.cpp</code>,
+   <code>~/whisper.cpp</code> or the home directory, or at <code>IAI_WHISPER_BIN</code>;</li>
+<li>a <code>ggml-large-v3</code> model, or the one at <code>IAI_WHISPER_MODEL</code>.</li>
+</ol>
+<p><em>whisper-server</em> then starts with the model kept in GPU memory. On a
+server it is reached through an ssh tunnel on a random port bound to
+127.0.0.1. It must report its GPU backend (<code>whisper_backend_init_gpu:
+using ...</code>), or voice input stops with the reason. The server process is
+stopped when <em>i.ai</em> exits. <strong>voice_language</strong> sets the spoken language
+(<code>auto</code> by default; <code>en</code>, <code>fr</code>, ...).</p>
 <h3>Sessions and output</h3>
 <p>With <strong>session</strong>, the dialog history and the last plan are saved under
 <code>$XDG_DATA_HOME/i.ai/sessions/</code> (by default <code>~/.local/share/i.ai/</code>), so a
@@ -226,6 +260,13 @@ compile the PDF:</p>
 <p>The same pipeline runs without <em>i.ai</em>:</p>
 <div class="code"><pre>cd ~/Documents/LaTex/Report/20261017_Terrain &amp;&amp; make
 </pre></div>
+<p>Speak the requests of a dialog, transcribed on a GPU server:</p>
+<div class="code"><pre>i.ai backend=claude -i input=voice voice_host=10.42.0.89 voice_user=yann
+</pre></div>
+<p>Or set the server once and speak a single request:</p>
+<div class="code"><pre>export IAI_VOICE_HOST=10.42.0.89 IAI_VOICE_USER=yann
+i.ai backend=claude input=voice
+</pre></div>
 <p>Mix GRASS and command-line steps in a plan:</p>
 <div class="code"><pre>i.ai backend=claude query=&quot;Export the slope map to a Cloud Optimized GeoTIFF and make a 1000 px PNG preview&quot; -e
 </pre></div>
@@ -239,6 +280,9 @@ i.ai operation=index
 <li>One backend: Ollama, an OpenAI-compatible server, the <code>claude</code> command
   (logged in), or the <code>opencode</code> command.</li>
 <li>NumPy, only for the embedding index.</li>
+<li>For voice input: PipeWire (<em>pw-record</em>) or ALSA (<em>arecord</em>), <em>ssh</em> for a
+  GPU server, and on the GPU machine a GPU-enabled whisper.cpp build
+  (e.g. <code>cmake -B build -DGGML_VULKAN=ON</code>) with the <code>ggml-large-v3</code> model.</li>
 <li>For report pipelines: a LaTeX installation (<em>latexmk</em> or <em>pdflatex</em>
   with <em>bibtex</em>) and whatever the steps use (Python with matplotlib,
   Graphviz).</li>

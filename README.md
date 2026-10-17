@@ -7,6 +7,9 @@ session, that go from the data to a LaTeX report, run end to end, repair
 their own failing steps and compile the PDF. Every GRASS tool installed
 in the session (core or addon) and every command-line tool on `PATH`
 (GDAL, LaTeX, Graphviz, ImageMagick, pandoc, ...) is available to it.
+Requests are typed, or spoken (`input=voice`) and transcribed by
+whisper.cpp on a GPU: this machine's, or a GPU server's (`voice_host`,
+`voice_user`), never on a CPU.
 
 Backends: Ollama, any OpenAI-compatible server, Claude Code (logged-in
 `claude` command, no API key) and OpenCode (free `opencode/big-pickle`
@@ -35,6 +38,7 @@ i.ai backend=claude operation=report workdir=~/Documents/LaTex/Report/20261017_T
      query="Terrain report of the elevation map: slope, streams, maps, figures, tables" -e -y
 i.ai backend=claude workdir=... operation=run from_step=04 -e   # rerun, with repairs
 i.ai backend=claude -i                 # interactive dialog
+i.ai backend=claude -i input=voice voice_host=10.42.0.89 voice_user=yann   # spoken requests
 i.ai operation=info                    # what the assistant sees
 i.ai operation=index                   # cache every tool interface, index manuals
 ```
@@ -55,6 +59,7 @@ See [i.ai.md](i.ai.md) for the full manual.
 | `iai_rag.py` | Manual page search (BM25, optional embeddings) |
 | `iai_shell.py` | Command-line catalog, read-only probes, bash/Python validation |
 | `iai_report.py` | Report workspaces: env, Makefile, run book, LaTeX, runner |
+| `iai_voice.py` | Voice input: pw-record, GPU search, whisper-server over ssh |
 | `iai_agents.py` | Intent, clarification, query, execution, pipeline and repair agents |
 | `tests/` | pytest suite (no language model needed) |
 

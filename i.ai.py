@@ -136,6 +136,42 @@
 # %end
 
 # %option
+# % key: input
+# % type: string
+# % required: no
+# % options: typing,voice
+# % answer: typing
+# % description: How requests are entered
+# % descriptions: typing;Typed in the terminal;voice;Spoken into the microphone, transcribed on a GPU (Enter starts and stops recording)
+# % guisection: Voice
+# %end
+
+# %option
+# % key: voice_host
+# % type: string
+# % required: no
+# % description: IP address or name of a GPU server for transcription (default: IAI_VOICE_HOST, else this machine)
+# % guisection: Voice
+# %end
+
+# %option
+# % key: voice_user
+# % type: string
+# % required: no
+# % description: Login name on the GPU server (default: IAI_VOICE_USER, else the ssh default)
+# % guisection: Voice
+# %end
+
+# %option
+# % key: voice_language
+# % type: string
+# % required: no
+# % answer: auto
+# % description: Spoken language for transcription (auto, en, fr, ...)
+# % guisection: Voice
+# %end
+
+# %option
 # % key: format
 # % type: string
 # % required: no
@@ -461,7 +497,7 @@ def run_pipeline(session, workspace, options, flags):
     :return: True when every step succeeded
     """
     from iai_agents import RepairAgent
-    from iai_report import run_step
+    from iai_report import check_step_ownership, run_step
 
     steps = workspace.steps()
     start = options["from_step"]
@@ -497,18 +533,22 @@ def run_pipeline(session, workspace, options, flags):
                 local_files=local,
                 known_outputs=workspace.known_outputs() | planned,
             )
+            check.errors += check_step_ownership(code, workspace.manifest["main"])
             if check.valid and not confirm_risk(check.risk, path, flags):
                 workspace.save_manifest()
                 return False
             if check.valid:
                 gs.message(_("Step {n}/{t}: {path}...").format(n=n, t=total, path=path))
+                before = mapset_maps(session)
                 returncode, tail = run_step(workspace, step)
             else:
                 returncode, tail = -1, "Validation failed:\n" + "\n".join(check.errors)
             session.registry.refresh()
             if returncode == 0:
-                planned.update(check.grass_outputs)
-                workspace.record_outputs(check.grass_outputs)
+                # What the step really created, whatever names its code builds.
+                created = mapset_maps(session) - before
+                planned.update(check.grass_outputs | created)
+                workspace.record_outputs(check.grass_outputs | created)
                 step["status"] = "done"
                 break
             step["status"] = "failed"
@@ -546,6 +586,16 @@ def run_pipeline(session, workspace, options, flags):
     gs.percent(1, 1, 1)
     session.context.refresh()
     return True
+
+
+def mapset_maps(session):
+    """(type, name) of every map in the current mapset."""
+    mapset = gs.gisenv()["MAPSET"]
+    return {
+        (e["type"], e["name"])
+        for e in session.registry.entities
+        if e["mapset"] == mapset
+    }
 
 
 def confirm_risk(risk, path, flags):
@@ -656,7 +706,63 @@ def run_index(session, options):
     session.manual.build_dense()
 
 
-def interactive_loop(session, flags, output_format, store, session_name):
+def start_voice(options):
+    """Start voice input on the GPU machine, or fail with what to fix."""
+    from iai_voice import VoiceError, VoiceInput
+
+    host = options["voice_host"] or os.environ.get("IAI_VOICE_HOST", "")
+    user = options["voice_user"] or os.environ.get("IAI_VOICE_USER", "")
+    if not sys.stdin.isatty():
+        gs.fatal(_("Voice input needs a terminal (Enter starts and stops recording)"))
+    try:
+        voice = VoiceInput(
+            language=options["voice_language"] or "auto",
+            host=host or None,
+            user=user or None,
+            message=gs.message,
+        )
+        voice.start()
+    except VoiceError as error:
+        gs.fatal(_("Voice input unavailable: {}").format(error))
+    return voice
+
+
+def read_request(voice, prompt="i.ai> "):
+    """Read one request: typed, or spoken when voice input is on.
+
+    With voice, an empty line starts recording and Enter stops it; the
+    transcription is then put on the prompt line, to edit or send.
+    """
+    if voice is None:
+        return input(prompt).strip()
+    from iai_voice import VoiceError
+
+    typed = input(prompt + "[Enter: speak] ").strip()
+    if typed:
+        return typed
+    print(_("Recording... press Enter to stop."), flush=True)
+    try:
+        text = voice.listen(wait_start=None, wait_stop=input)
+    except VoiceError as error:
+        gs.warning(str(error))
+        return ""
+    if not text:
+        gs.message(_("Nothing was heard."))
+        return ""
+    try:
+        import readline
+
+        readline.set_startup_hook(lambda: readline.insert_text(text))
+        try:
+            return input(prompt).strip()
+        finally:
+            readline.set_startup_hook()
+    except ImportError:
+        print(prompt + text)
+        return text if confirm(_("Send this?")) else ""
+
+
+def interactive_loop(session, flags, output_format, store, session_name, voice=None):
     gs.message(
         _(
             "i.ai interactive dialog. Commands: /run (execute the last plan), /plan, "
@@ -666,7 +772,7 @@ def interactive_loop(session, flags, output_format, store, session_name):
     last = None
     while True:
         try:
-            text = input("i.ai> ").strip()
+            text = read_request(voice)
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -755,10 +861,31 @@ def main():
         session.catalog.save()
         return 0 if ok else 1
 
-    if not options["query"] and not flags["i"]:
-        gs.fatal(_("Give a query, or use -i for an interactive dialog"))
+    voice_mode = options["input"] == "voice"
+    if not options["query"] and not flags["i"] and not voice_mode:
+        gs.fatal(_("Give a query, use -i for an interactive dialog, or input=voice"))
 
     session = Session(options)
+    voice = start_voice(options) if voice_mode else None
+    try:
+        return ask(session, options, flags, store, voice)
+    finally:
+        if voice is not None:
+            voice.close()
+
+
+def ask(session, options, flags, store, voice):
+    """Answer the query or run the dialog; the ask and report operations."""
+    operation = options["operation"]
+    output_format = options["format"]
+    if voice is not None and not options["query"] and not flags["i"]:
+        # One spoken request, edited or sent from the prompt line.
+        while not options["query"]:
+            try:
+                options["query"] = read_request(voice)
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 1
     if options["session"] and store.load(options["session"], session.context):
         gs.verbose(_("Continuing session <{}>").format(options["session"]))
     if options["session"] or options["workdir"]:
@@ -793,8 +920,11 @@ def main():
                 store.save(options["session"], session.context)
 
     if flags["i"]:
-        interactive_loop(session, flags, output_format, store, options["session"])
+        interactive_loop(
+            session, flags, output_format, store, options["session"], voice=voice
+        )
     session.catalog.save()
+    return 0
 
 
 if __name__ == "__main__":

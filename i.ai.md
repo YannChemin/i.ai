@@ -177,6 +177,43 @@ are kept, and only new or changed steps are rewritten. The report title
 block takes **author** and **contact** (by default from `git config`),
 **organization** and an optional **classification** banner.
 
+### Voice input
+
+By default, requests are typed. With **input=voice**, they can also be
+spoken into the PC microphone. In the dialog (**-i**), an empty line
+(Enter) starts recording and Enter stops it. Without **-i** and without
+**query**, one spoken request is taken. The transcription is put on the
+`i.ai>` prompt line, where it can be edited before Enter sends it. Typed
+lines and `/commands` still work.
+
+Speech is recorded with PipeWire (*pw-record*, the Debian 13 default;
+*arecord* otherwise) as 16 kHz mono WAV, and transcribed by whisper.cpp
+with the large-v3 model on a GPU, never on a CPU. The recording is
+deleted after transcription and nothing is stored on the GPU machine.
+Transcription runs:
+
+- by default on this machine, when the GPU search finds a GPU and a
+  whisper.cpp build with a GPU backend;
+- on a GPU server given by **voice\_host** (IP address or name) and
+  **voice\_user** (login name; key-based ssh login is required). The
+  defaults can be set once in the environment variables `IAI_VOICE_HOST`
+  and `IAI_VOICE_USER`.
+
+The GPU search looks for:
+
+1. GPU hardware (*lspci*, `/dev/dri/renderD*`, `/dev/kfd`, *nvidia-smi*);
+2. a *whisper-server* linked to a GPU backend of ggml (Vulkan, CUDA, HIP,
+   OpenCL, SYCL, Metal, MUSA), in `PATH`, `~/dev/whisper.cpp`,
+   `~/whisper.cpp` or the home directory, or at `IAI_WHISPER_BIN`;
+3. a `ggml-large-v3` model, or the one at `IAI_WHISPER_MODEL`.
+
+*whisper-server* then starts with the model kept in GPU memory. On a
+server it is reached through an ssh tunnel on a random port bound to
+127.0.0.1. It must report its GPU backend (`whisper_backend_init_gpu:
+using ...`), or voice input stops with the reason. The server process is
+stopped when *i.ai* exits. **voice\_language** sets the spoken language
+(`auto` by default; `en`, `fr`, ...).
+
 ### Sessions and output
 
 With **session**, the dialog history and the last plan are saved under
@@ -272,6 +309,19 @@ The same pipeline runs without *i.ai*:
 cd ~/Documents/LaTex/Report/20261017_Terrain && make
 ```
 
+Speak the requests of a dialog, transcribed on a GPU server:
+
+```sh
+i.ai backend=claude -i input=voice voice_host=10.42.0.89 voice_user=yann
+```
+
+Or set the server once and speak a single request:
+
+```sh
+export IAI_VOICE_HOST=10.42.0.89 IAI_VOICE_USER=yann
+i.ai backend=claude input=voice
+```
+
 Mix GRASS and command-line steps in a plan:
 
 ```sh
@@ -291,6 +341,9 @@ i.ai operation=index
 - One backend: Ollama, an OpenAI-compatible server, the `claude` command
   (logged in), or the `opencode` command.
 - NumPy, only for the embedding index.
+- For voice input: PipeWire (*pw-record*) or ALSA (*arecord*), *ssh* for a
+  GPU server, and on the GPU machine a GPU-enabled whisper.cpp build
+  (e.g. `cmake -B build -DGGML_VULKAN=ON`) with the `ggml-large-v3` model.
 - For report pipelines: a LaTeX installation (*latexmk* or *pdflatex*
   with *bibtex*) and whatever the steps use (Python with matplotlib,
   Graphviz).

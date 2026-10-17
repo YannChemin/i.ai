@@ -45,14 +45,17 @@ def test_unknown_command_and_syntax(shell):
 
 
 def test_grass_calls_in_bash(shell):
-    code = 'grass_run r.slope.aspect elevation=elevation slpe=s --overwrite\n'
+    code = "grass_run r.slope.aspect elevation=elevation slpe=s --overwrite\n"
     found = errors(shell, code, functions=("grass_run",))
     assert any("no parameter 'slpe'" in e for e in found)
 
 
 def test_grass_heredoc_is_checked(shell):
     code = "grass_run bash -s <<EOF\nr.univar mapp=elevation\nEOF\n"
-    assert any("no parameter 'mapp'" in e for e in errors(shell, code, functions=("grass_run",)))
+    assert any(
+        "no parameter 'mapp'" in e
+        for e in errors(shell, code, functions=("grass_run",))
+    )
 
 
 def test_shell_constructs_are_not_commands(shell):

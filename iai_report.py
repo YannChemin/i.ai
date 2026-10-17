@@ -162,6 +162,31 @@ class Workspace:
         self.manifest["grass_outputs"] = sorted(list(o) for o in known)
 
 
+# Files i.ai writes itself; steps must not write them.
+PROTECTED = ("Makefile", "README.md", "references.bib", "scripts/00_env.sh",
+             "scripts/run_step.sh", "tables/runbook.tex", ".i.ai/")  # fmt: skip
+LATEX_TOOLS = re.compile(
+    r"(^|[\s;&|(\"'\[,])(pdflatex|xelatex|lualatex|latexmk|bibtex|biber)\b"
+)
+
+
+def check_step_ownership(code, main):
+    """Errors when a step script writes or compiles the report."""
+    errors = []
+    if LATEX_TOOLS.search(code):
+        errors.append(
+            "Steps must not compile the report: i.ai and 'make report' compile it. "
+            "Write figures, maps and tables only."
+        )
+    for name in (main + ".tex", main + ".pdf") + PROTECTED[:-1]:
+        if re.search(r"(^|[/\s\"'$}])" + re.escape(name) + r"\b", code):
+            errors.append(
+                "Steps must not write {}: i.ai writes it (the report body comes from "
+                "the report agent)".format(name)
+            )
+    return errors
+
+
 def validate_outline(outline):
     """Return the list of problems in a pipeline outline from the model."""
     errors = []
@@ -186,7 +211,12 @@ def validate_outline(outline):
         if step.get("lang") not in ("bash", "python"):
             errors.append("Step {} lang must be bash or python".format(sid))
         for output in step.get("outputs") or []:
-            if "/" in output and not output.startswith(OUTPUT_ROOTS):
+            if output in (main + ".tex", main + ".pdf") or output.startswith(PROTECTED):
+                errors.append(
+                    "Step {} output <{}> is written by i.ai, not by a step; steps make "
+                    "figures, maps, tables and data".format(sid, output)
+                )
+            elif "/" in output and not output.startswith(OUTPUT_ROOTS):
                 errors.append(
                     "Step {} output <{}> must be under {} (or a GRASS map name)".format(
                         sid, output, ", ".join(OUTPUT_ROOTS)

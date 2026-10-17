@@ -499,6 +499,35 @@ class ShellValidator:
                 "Python syntax: line {}: {}".format(error.lineno, error.msg)
             )
             return
+        # Names bound to gs.region_env(...), a GRASS_REGION string.
+        region_strings = set()
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Call)
+                and _call_name(node.value) == "region_env"
+            ):
+                region_strings.update(
+                    t.id for t in node.targets if isinstance(t, ast.Name)
+                )
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for keyword in node.keywords:
+                    value = keyword.value
+                    if keyword.arg == "env" and (
+                        (
+                            isinstance(value, ast.Call)
+                            and _call_name(value) == "region_env"
+                        )
+                        or (isinstance(value, ast.Name) and value.id in region_strings)
+                    ):
+                        result.errors.append(
+                            "line {}: gs.region_env() returns a GRASS_REGION string, not an "
+                            "environment: env = os.environ.copy(); env['GRASS_REGION'] = "
+                            "gs.region_env(raster=...), or use gs.RegionManager".format(
+                                node.lineno
+                            )
+                        )
         for node in ast.walk(tree):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 names = (
@@ -608,6 +637,11 @@ class ShellValidator:
             result.warnings.append(
                 "line {} ({}): {}".format(node.lineno, module, warning)
             )
+
+
+def _call_name(call):
+    func = call.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
 
 
 def _simple_commands(code, offset=0):

@@ -24,6 +24,7 @@ import re
 import grass.script as gs
 
 from iai_llm import BackendError
+from iai_report import check_step_ownership
 from iai_shell import plan_item, validate_steps
 
 INTENTS = ["execute", "query", "pipeline", "clarify", "help", "chat"]
@@ -193,9 +194,14 @@ import grass.script as gs and use gs.run_command, gs.read_command, gs.parse_comm
 GRASS mapset. Never use absolute paths into the user's home except data inputs.
 - GRASS outputs: new map names, with --overwrite (bash) or overwrite=True (Python) \
 so the step can run again. Never write over maps the pipeline did not create.
-- Region: never leave the region changed. Python: with gs.RegionManager(...). \
-bash: g.region save=iai_before --overwrite at the start, trap 'g.region \
+- Region: never leave the region changed. Python: with gs.RegionManager(raster=...): \
+or env = os.environ.copy(); env["GRASS_REGION"] = gs.region_env(raster=...) then \
+env=env on each call (region_env returns a string, not an environment). bash: \
+g.region save=iai_before --overwrite at the start, trap 'g.region \
 region=iai_before' EXIT, and restore it.
+- GRASS 8.5+ output formats: prefer format=shell or format=json over the deprecated \
+-g flag; g.region and g.proj take format= only together with -p.
+- Do not compile the report in a step: i.ai and "make report" compile it.
 - Maps for the report: GRASS display tools with the cairo driver: \
 export GRASS_RENDER_IMMEDIATE=cairo GRASS_RENDER_FILE=$REPORT_DIR/maps/x.png \
 GRASS_RENDER_WIDTH=1400 GRASS_RENDER_HEIGHT=1000 GRASS_RENDER_TRANSPARENT=FALSE, \
@@ -505,6 +511,20 @@ class PipelineAgent(LoopAgent):
         from iai_report import validate_outline
 
         self.trace = []
+        manifest = self.workspace.manifest
+        if (
+            manifest.get("partial")
+            and manifest.get("request") == text
+            and manifest.get("outline")
+        ):
+            # Same request after an interruption (backend limit, network...):
+            # keep the outline and the steps already written.
+            gs.message(
+                _("Resuming the interrupted pipeline in {}...").format(
+                    self.workspace.root
+                )
+            )
+            return self.build(text, manifest["outline"], resume=True)
         self.actions = ("tool", "outline", "clarify")
         existing = ""
         if self.workspace.exists:
@@ -539,8 +559,12 @@ class PipelineAgent(LoopAgent):
             return result
         return self.build(text, result["outline"])
 
-    def build(self, request, outline):
-        """Write every step script and the report into the workspace."""
+    def build(self, request, outline, resume=False):
+        """Write every step script and the report into the workspace.
+
+        The manifest is saved after every step, marked partial until the
+        report is written, so an interrupted build resumes where it stopped.
+        """
         from iai_report import (
             RUN_STEP,
             render_env,
@@ -562,6 +586,7 @@ class PipelineAgent(LoopAgent):
                 "outline": outline,
                 "request": request,
                 "steps": [],
+                "partial": True,
             }
         )
         ws.manifest.setdefault(
@@ -582,7 +607,7 @@ class PipelineAgent(LoopAgent):
             }
             path = ws.step_file(step)
             old = previous.get(step["id"])
-            if spec.get("keep") and old and ws.read(path):
+            if (spec.get("keep") or (resume and old)) and old and ws.read(path):
                 gs.message(_("Keeping step {}: {}").format(step["id"], path))
                 ws.manifest["steps"].append(step)
                 written.append((step, ws.read(path)))
@@ -598,7 +623,7 @@ class PipelineAgent(LoopAgent):
             step["risk"] = check.risk
             ws.manifest["steps"].append(step)
             written.append((step, code))
-        ws.save_manifest()
+            ws.save_manifest()
         render_makefile(ws)
         render_runbook(ws)
         gs.message(_("Writing the report..."))
@@ -618,6 +643,7 @@ class PipelineAgent(LoopAgent):
         ]
         render_readme(ws, self.meta.get("session"), unverified)
         ws.manifest["report"] = {"compiled": ok, "errors": errors}
+        ws.manifest["partial"] = False
         ws.save_manifest()
         return {
             "kind": "pipeline",
@@ -725,6 +751,7 @@ class PipelineAgent(LoopAgent):
                 local_files=local,
                 known_outputs=ws.known_outputs() | planned,
             )
+            check.errors += check_step_ownership(code, outline["main"])
             if not check.valid:
                 return (
                     "retry",
@@ -885,6 +912,7 @@ class RepairAgent(PipelineAgent):
                 local_files=local,
                 known_outputs=ws.known_outputs() | planned,
             )
+            check.errors += check_step_ownership(fixed, ws.manifest.get("main", ""))
             if not check.valid:
                 return "retry", "The script is not valid:\n" + "\n".join(check.errors)
             return "done", fixed
