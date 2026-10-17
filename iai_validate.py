@@ -287,6 +287,13 @@ class ValidationLayer:
             expression = command.params["expression"]
             if not (script_mode and _is_dynamic(expression)):
                 self._check_mapcalc(name, expression, planned, result)
+            else:
+                # The maps it writes still count, when their names are literal.
+                element = "raster" if name == "r.mapcalc" else "raster_3d"
+                for target in re.findall(
+                    r"(?:^|[\n;])\s*([A-Za-z0-9_.]+)\s*=(?!=)", expression
+                ):
+                    result.outputs.append((element, target))
 
         if script_mode:
             # Maps may come from earlier steps or be replaced on purpose.

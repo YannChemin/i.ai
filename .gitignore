@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Tools
+.ruff_cache/
+.pytest_cache/
+.venv/
+
+# GRASS build (make MODULE_TOPDIR=...)
+OBJ.*/
+*.tmp.html
+*.tmp.md
+
+# Editors and OS
+*~
+*.swp
+.*.swp
+.idea/
+.vscode/
+.DS_Store
