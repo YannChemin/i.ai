@@ -1,515 +1,460 @@
 #!/usr/bin/env python3
-"""
-i.ai GRASS Addon - AI Assistant for GRASS GIS
-Native GRASS addon that integrates with GRASS CLI interface
-"""
+##############################################################################
+# MODULE:    i.ai
+# AUTHOR(S): Yann Chemin <dr.yann.chemin@gmail.com>
+# PURPOSE:   AI assistant that answers questions and plans validated GRASS
+#            commands from the live session, with Ollama, OpenAI-compatible
+#            servers, Claude Code or OpenCode as the language model.
+# SPDX-License-Identifier: Unlicense
+##############################################################################
 
-#%module
-#% description: AI assistant for GRASS GIS with comprehensive module knowledge
-#% keyword: AI
-#% keyword: assistant
-#% keyword: analysis
-#% keyword: remote sensing
-#% keyword: automation
-#%end
+# %module
+# % description: AI assistant for GRASS: answers questions and plans validated commands with every installed tool.
+# % keyword: imagery
+# % keyword: AI
+# % keyword: LLM
+# % keyword: assistant
+# % keyword: automation
+# %end
 
-#%option
-#% key: query
-#% type: string
-#% description: Your question or task for the AI assistant
-#% required: yes
-#%end
+# %option
+# % key: query
+# % type: string
+# % required: no
+# % description: Question or task for the assistant
+# % guisection: Request
+# %end
 
-#%option
-#% key: model
-#% type: string
-#% description: Ollama model to use
-#% answer: llama3.1:latest
-#%end
+# %option
+# % key: operation
+# % type: string
+# % required: no
+# % options: ask,info,index
+# % answer: ask
+# % description: What to do
+# % descriptions: ask;Answer the query or plan commands for it;info;Print the session context the assistant sees;index;Cache every tool interface and index the manual pages
+# % guisection: Request
+# %end
 
-#%option
-#% key: ollama_url
-#% type: string
-#% description: Ollama service URL
-#% answer: http://localhost:11434
-#%end
+# %option
+# % key: backend
+# % type: string
+# % required: no
+# % options: ollama,openai,claude,opencode
+# % answer: ollama
+# % description: Language model backend
+# % descriptions: ollama;Local Ollama server;openai;OpenAI-compatible server (key in IAI_API_KEY or OPENAI_API_KEY);claude;Claude Code CLI on the logged-in account;opencode;OpenCode CLI (default model opencode/big-pickle, guest access)
+# % guisection: Model
+# %end
 
-#%option
-#% key: session
-#% type: string
-#% description: Continue previous session (session ID)
-#%end
+# %option
+# % key: model
+# % type: string
+# % required: no
+# % description: Model name (default: first Ollama model, Claude Code default, or opencode/big-pickle)
+# % guisection: Model
+# %end
 
-#%flag
-#% key: e
-#% description: Execute suggested GRASS commands automatically
-#%end
+# %option
+# % key: url
+# % type: string
+# % required: no
+# % description: Server URL (Ollama, OpenAI-compatible base URL, or a running OpenCode server)
+# % guisection: Model
+# %end
 
-#%flag
-#% key: v
-#% description: Verbose output
-#%end
+# %option
+# % key: embed_model
+# % type: string
+# % required: no
+# % description: Embedding model for operation=index (ollama and openai backends)
+# % guisection: Model
+# %end
 
-#%flag
-#% key: i
-#% description: Interactive mode (stay in AI session)
-#%end
+# %option
+# % key: session
+# % type: string
+# % required: no
+# % description: Name of a dialog session to continue and save
+# % guisection: Request
+# %end
 
-#%flag
-#% key: s
-#% description: Show system information
-#%end
+# %option
+# % key: format
+# % type: string
+# % required: no
+# % options: plain,json,shell
+# % answer: plain
+# % description: Output format
+# % descriptions: plain;Answer and plan as text;json;Full result as JSON;shell;Plan as a shell script
+# % guisection: Output
+# %end
 
-import sys
-import os
+# %option
+# % key: max_steps
+# % type: integer
+# % required: no
+# % answer: 10
+# % description: Maximum number of reasoning steps per request
+# % guisection: Model
+# %end
+
+# %option
+# % key: timeout
+# % type: integer
+# % required: no
+# % answer: 300
+# % description: Timeout of one language model call in seconds
+# % guisection: Model
+# %end
+
+# %flag
+# % key: e
+# % description: Execute the validated plan
+# % guisection: Execution
+# %end
+
+# %flag
+# % key: y
+# % description: Run plan steps that change existing data or session state without asking
+# % guisection: Execution
+# %end
+
+# %flag
+# % key: i
+# % description: Interactive dialog
+# % guisection: Request
+# %end
+
+# %rules
+# % requires: -y, -e
+# %end
+
 import json
-import subprocess
-import requests
-import re
-import tempfile
-import shutil
-from pathlib import Path
+import os
+import sys
 
-# GRASS imports
 import grass.script as gs
 from grass.exceptions import CalledModuleError
 
-class IAIGrassAddon:
-    def __init__(self):
-        self.session_context = {}
-        self.module_cache = {}
-        self.system_info = {}
-        
-    def get_grass_modules(self):
-        """Get comprehensive list of GRASS modules"""
-        if self.module_cache:
-            return self.module_cache
-            
-        modules = {
-            'imagery': [],      # i.*
-            'general': [],      # g.*
-            'raster': [],       # r.*
-            'raster3d': [],     # r3.*
-            'vector': [],       # v.*
-            'database': [],     # db.*
-            'temporal': [],     # t.*
-            'misc': [],         # m.*
-            'display': [],      # d.*
-            'ps': [],           # ps.*
-        }
-        
-        try:
-            # Get all modules using g.version -g
-            result = gs.read_command('g.version', flags='g')
-            # Parse modules from version info or use hardcoded list
-            all_modules = [
-                'g.list', 'g.remove', 'g.copy', 'g.rename', 'g.region', 'g.proj', 'g.gisenv',
-                'r.in.gdal', 'r.out.gdal', 'r.info', 'r.stats', 'r.univar', 'r.mapcalc',
-                'r.slope.aspect', 'r.watershed', 'r.resample', 'r.rescale', 'r.colors',
-                'v.in.ogr', 'v.out.ogr', 'v.info', 'v.db.select', 'v.db.addcolumn', 'v.buffer',
-                'v.overlay', 'v.select', 'v.centroid', 'v.voronoi', 'v.clean',
-                'i.group', 'i.target', 'i.class', 'i.cluster', 'i.maxlik', 'i.smap',
-                'i.vi', 'i.tasscap', 'i.pca', 'i.fft', 'i.ifft',
-                'db.connect', 'db.select', 'db.execute', 'db.tables', 'db.columns',
-                'db.describe', 'db.drivers', 'db.login',
-                't.create', 't.register', 't.info', 't.list', 't.remove', 't.sample',
-                't.rast.aggregate', 't.rast.extract', 't.vect.observe', 't.vect.what.strds',
-                'm.proj', 'm.cogo', 'm.transform', 'm.measure', 'm.lpp'
-            ]
-            
-            # Categorize modules by prefix
-            for module in all_modules:
-                if module.startswith('i.'):
-                    modules['imagery'].append(module)
-                elif module.startswith('g.'):
-                    modules['general'].append(module)
-                elif module.startswith('r.'):
-                    modules['raster'].append(module)
-                elif module.startswith('r3.'):
-                    modules['raster3d'].append(module)
-                elif module.startswith('v.'):
-                    modules['vector'].append(module)
-                elif module.startswith('db.'):
-                    modules['database'].append(module)
-                elif module.startswith('t.'):
-                    modules['temporal'].append(module)
-                elif module.startswith('m.'):
-                    modules['misc'].append(module)
-                elif module.startswith('d.'):
-                    modules['display'].append(module)
-                elif module.startswith('ps.'):
-                    modules['ps'].append(module)
-                    
-        except Exception as e:
-            gs.warning(f"Could not enumerate modules: {e}")
-            
-        self.module_cache = modules
-        return modules
-    
-    def get_gdal_tools(self):
-        """Get available GDAL command-line tools"""
-        gdal_tools = []
-        common_tools = [
-            'gdalinfo', 'gdal_translate', 'gdalwarp', 'gdalbuildvrt',
-            'gdal_rasterize', 'gdal_polygonize', 'gdal_sieve', 'gdal_fillnodata',
-            'gdal_contour', 'gdaldem', 'gdal_grid', 'gdal_merge',
-            'gdal_pansharpen', 'gdaltransform', 'nearblack', 'gdaladdo',
-            'gdal_edit', 'gdal_calc.py', 'gdal_proximity', 'gdal_slope',
-            'gdal_aspect', 'gdal_hillshade', 'gdal_roughness', 'gdal_TPI',
-            'gdal_tri', 'ogrinfo', 'ogr2ogr', 'ogrtindex', 'ogrmerge',
-            'ogrlineref', 'ogrlayer2sql', 'ogrlayer2sqlite', 'ogr2vrt'
-        ]
-        
-        for tool in common_tools:
-            if shutil.which(tool):
-                gdal_tools.append(tool)
-                
-        return gdal_tools
-    
-    def get_system_info(self):
-        """Get comprehensive system information"""
-        if self.system_info:
-            return self.system_info
-            
-        info = {
-            'os': 'Linux',
-            'grass_version': None,
-            'grass_db': None,
-            'grass_location': None,
-            'grass_mapset': None,
-            'grass_region': None,
-            'available_maps': {'raster': [], 'vector': []},
-            'gdal_tools': [],
-            'python_packages': [],
-            'system_tools': [],
-        }
-        
-        try:
-            # GRASS info
-            gisenv = gs.gisenv()
-            info['grass_version'] = gs.version()['version']
-            info['grass_db'] = gisenv.get('GISDBASE')
-            info['grass_location'] = gisenv.get('LOCATION_NAME')
-            info['grass_mapset'] = gisenv.get('MAPSET')
-            
-            # Region info
-            try:
-                region = gs.region()
-                info['grass_region'] = {
-                    'north': region.get('n'),
-                    'south': region.get('s'),
-                    'east': region.get('e'),
-                    'west': region.get('w'),
-                    'nsres': region.get('nsres'),
-                    'ewres': region.get('ewres'),
-                    'rows': region.get('rows'),
-                    'cols': region.get('cols')
-                }
-            except:
-                pass
-            
-            # Available maps
-            try:
-                info['available_maps']['raster'] = gs.list_strings(type='raster')[:20]
-                info['available_maps']['vector'] = gs.list_strings(type='vector')[:20]
-            except:
-                pass
-            
-            # GDAL tools
-            info['gdal_tools'] = self.get_gdal_tools()
-            
-            # Python packages
-            python_packages = []
-            for pkg in ['gdal', 'rasterio', 'geopandas', 'numpy', 'scipy', 'matplotlib', 'sklearn']:
-                try:
-                    __import__(pkg)
-                    python_packages.append(pkg)
-                except ImportError:
-                    pass
-            info['python_packages'] = python_packages
-            
-            # System tools
-            system_tools = []
-            for tool in ['wget', 'curl', 'unzip', 'tar', 'gzip', 'awk', 'sed', 'grep', 'cut', 'sort', 'uniq']:
-                if shutil.which(tool):
-                    system_tools.append(tool)
-            info['system_tools'] = system_tools
-            
-        except Exception as e:
-            gs.warning(f"Could not get system info: {e}")
-            
-        self.system_info = info
-        return info
-    
-    def search_packages(self, query):
-        """Search for packages using apt-cache"""
-        try:
-            result = subprocess.run(
-                ['apt-cache', 'search', query],
-                capture_output=True,
-                text=True,
-                timeout=30
+
+def _load_library():
+    """Make the i.ai helper modules importable, installed or in the source tree."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    candidates = [here]
+    path = gs.utils.get_lib_path(modname="i.ai")
+    if path:
+        candidates.insert(0, path)
+    for candidate in candidates:
+        if os.path.isfile(os.path.join(candidate, "iai_agents.py")):
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+            return
+    gs.fatal(_("Cannot find the i.ai library files (iai_*.py)"))
+
+
+class Session:
+    """Everything one i.ai run needs, wired together."""
+
+    def __init__(self, options, need_backend=True):
+        from iai_catalog import ModuleCatalog
+        from iai_context import ContextManager
+        from iai_llm import BackendError, make_backend
+        from iai_rag import ManualIndex
+        from iai_registry import EntityMatcher, EntityRegistry
+        from iai_tools import ToolRegistry
+        from iai_validate import ValidationLayer
+
+        self.options = options
+        self.catalog = ModuleCatalog()
+        self.registry = EntityRegistry()
+        self.matcher = EntityMatcher(self.registry)
+        self.validator = ValidationLayer(
+            self.catalog, self.registry, self.matcher, overwrite=gs.overwrite()
+        )
+        self.context = ContextManager(self.catalog, self.registry)
+        self.backend = None
+        if need_backend:
+            self.backend = make_backend(
+                options["backend"],
+                model=options["model"] or None,
+                url=options["url"] or None,
+                timeout=int(options["timeout"]),
+                embed_model=options["embed_model"] or None,
             )
-            if result.returncode == 0:
-                return result.stdout
-            else:
-                return f"Package search failed: {result.stderr}"
-        except Exception as e:
-            return f"Package search error: {e}"
-    
-    def get_system_prompt(self):
-        """Get comprehensive system prompt for AI"""
-        modules = self.get_grass_modules()
-        system_info = self.get_system_info()
-        
-        prompt = f"""
-You are i.ai, an expert AI assistant for GRASS GIS and Remote Sensing analysis.
+            try:
+                self.backend.check()
+            except BackendError as error:
+                gs.fatal(str(error))
+            gs.verbose(_("Language model: {}").format(self.backend.describe()))
+        self.manual = ManualIndex(self.backend)
+        self.tools = ToolRegistry(
+            self.catalog, self.registry, self.matcher, self.validator, self.manual
+        )
+        self.copilot = None
+        if need_backend:
+            from iai_agents import Copilot
 
-ENVIRONMENT CONTEXT:
-- Operating System: Linux (Debian-based)
-- GRASS GIS Version: {system_info['grass_version']}
-- Database: {system_info['grass_db']}
-- Location: {system_info['grass_location']}
-- Mapset: {system_info['grass_mapset']}
+            self.copilot = Copilot(
+                self.backend,
+                self.context,
+                self.tools,
+                self.validator,
+                max_steps=int(options["max_steps"]),
+            )
 
-CURRENT REGION:
-{json.dumps(system_info['grass_region'], indent=2) if system_info['grass_region'] else 'Region not available'}
+    def refresh(self):
+        self.registry.refresh()
+        self.context.refresh()
 
-AVAILABLE GRASS MODULES:
-Imagery (i.*): {', '.join(modules['imagery'][:10])} ({len(modules['imagery'])} total)
-General (g.*): {', '.join(modules['general'][:10])} ({len(modules['general'])} total)
-Raster (r.*): {', '.join(modules['raster'][:15])} ({len(modules['raster'])} total)
-Raster3D (r3.*): {', '.join(modules['raster3d'])} ({len(modules['raster3d'])} total)
-Vector (v.*): {', '.join(modules['vector'][:15])} ({len(modules['vector'])} total)
-Database (db.*): {', '.join(modules['database'])} ({len(modules['database'])} total)
-Temporal (t.*): {', '.join(modules['temporal'])} ({len(modules['temporal'])} total)
-Miscellaneous (m.*): {', '.join(modules['misc'])} ({len(modules['misc'])} total)
 
-AVAILABLE MAPS:
-Raster: {', '.join(system_info['available_maps']['raster'])}
-Vector: {', '.join(system_info['available_maps']['vector'])}
+def print_result(result, output_format):
+    """Print a copilot result on stdout in the requested format."""
+    try:
+        _print_result(result, output_format)
+    finally:
+        sys.stdout.flush()
 
-GDAL TOOLS:
-{', '.join(system_info['gdal_tools'])}
 
-PYTHON PACKAGES:
-{', '.join(system_info['python_packages'])}
+def _print_result(result, output_format):
+    if output_format == "json":
+        data = {k: v for k, v in result.items() if k != "plan"}
+        if result.get("plan"):
+            data["plan"] = [
+                dict(r.command.to_dict(), risk=r.risk, warnings=r.warnings)
+                for r in result["plan"]
+            ]
+        print(json.dumps(data, indent=2, default=str))
+        return
+    if output_format == "shell":
+        print("#!/bin/sh")
+        print("# Generated by i.ai; review before running.")
+        if result.get("text"):
+            for line in result["text"].splitlines():
+                print("# " + line)
+        for r in result.get("plan") or []:
+            if r.command.purpose:
+                print("# " + r.command.purpose)
+            print(r.command.shell())
+        for q in result.get("questions") or []:
+            print("# Question: " + q)
+        return
+    if result["kind"] == "error":
+        gs.warning(result["text"])
+        return
+    if result.get("text"):
+        print(result["text"])
+    if result["kind"] == "clarify":
+        for q in result["questions"]:
+            print("? " + q)
+        if result.get("suggestions"):
+            print("\nYou could ask instead:")
+            for s in result["suggestions"]:
+                print("  - " + s)
+    if result.get("plan"):
+        print("\nPlan:")
+        for n, r in enumerate(result["plan"], 1):
+            note = "" if r.risk != "modify" else "  [changes existing data or state]"
+            if r.command.purpose:
+                print("  # {}".format(r.command.purpose))
+            print("  {}. {}{}".format(n, r.command.shell(), note))
+            for w in r.warnings:
+                print("     warning: " + w)
 
-SYSTEM TOOLS:
-{', '.join(system_info['system_tools'])}
 
-CAPABILITIES:
-1. Full access to all GRASS GIS modules (i.*, g.*, r.*, r3.*, v.*, db.*, t.*, m.*, d.*, ps.*)
-2. GDAL command-line tools for raster/vector processing
-3. Linux terminal tools (wget, curl, unzip, tar, awk, sed, grep, etc.)
-4. Python libraries for geospatial analysis
-5. Package installation via apt-cache search and apt install
-6. File system operations and data download
+def confirm(question):
+    """Ask a yes/no question on the terminal; no terminal means no."""
+    sys.stdout.flush()
+    if not sys.stdin.isatty():
+        return False
+    try:
+        answer = input("{} [y/N] ".format(question))
+    except EOFError:
+        return False
+    return answer.strip().lower() in ("y", "yes")
 
-RESPONSE GUIDELINES:
-1. Provide specific, executable GRASS commands with correct syntax
-2. Include parameter values where appropriate
-3. Suggest GDAL tools when relevant for format conversion or processing
-4. Recommend Linux tools for data download and preparation
-5. Use apt-cache search to find additional tools when needed
-6. Consider the current region and available maps in recommendations
-7. Provide step-by-step workflows for complex analyses
-8. Include error checking and validation suggestions
 
-COMMAND SYNTAX EXAMPLES:
-- GRASS: g.list type=raster
-- GDAL: gdalinfo input.tif
-- Linux: wget https://example.com/data.zip
-- Package: apt-cache search satellite
+def execute_plan(session, results, assume_yes, interactive):
+    """Run a validated plan step by step, re-validating each step first.
 
-Be practical, specific, and focus on implementable solutions using the available tools.
-"""
-        return prompt
-    
-    def query_ollama(self, query, model, url, session_context=""):
-        """Query Ollama with comprehensive context"""
+    :return: True when every step ran
+    """
+    from iai_validate import Command
+
+    sys.stdout.flush()  # Show the plan before the tools' own messages.
+    commands = [r.command for r in results]
+    total = len(commands)
+    for n, command in enumerate(commands, 1):
+        gs.percent(n - 1, total, 1)
+        check = session.validator.validate(Command.from_any(command.to_dict()))
+        if not check.valid:
+            gs.warning(
+                _("Step {n} <{cmd}> is no longer valid: {err}").format(
+                    n=n, cmd=command.shell(), err="; ".join(check.errors)
+                )
+            )
+            return False
+        if check.risk == "modify" and not assume_yes:
+            if not confirm(
+                _(
+                    "Step {n} changes existing data or session state:\n  {cmd}\nRun it?"
+                ).format(n=n, cmd=command.shell())
+            ):
+                gs.warning(
+                    _(
+                        "Stopped before step {n} <{cmd}>; run i.ai with -y to allow "
+                        "steps that change existing data or state."
+                    ).format(n=n, cmd=command.shell())
+                )
+                return False
+        gs.message(
+            _("Step {n}/{total}: {cmd}...").format(
+                n=n, total=total, cmd=command.shell()
+            )
+        )
+        kwargs = dict(command.params)
+        if command.flags:
+            kwargs["flags"] = command.flags
         try:
-            system_prompt = self.get_system_prompt()
-            full_prompt = f"{system_prompt}\n\nPrevious context: {session_context}\n\nUser query: {query}"
-            
-            payload = {
-                "model": model,
-                "prompt": full_prompt,
-                "stream": False
-            }
-            
-            response = requests.post(f"{url}/api/generate", json=payload, timeout=120)
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("response", "No response received")
+            gs.run_command(command.module, overwrite=gs.overwrite(), **kwargs)
+        except CalledModuleError as error:
+            message = _("Step {n} <{cmd}> failed: {err}").format(
+                n=n, cmd=command.shell(), err=error
+            )
+            if interactive:
+                gs.warning(message)
+                return False
+            gs.fatal(message)
+        session.registry.refresh()
+    gs.percent(1, 1, 1)
+    session.context.refresh()
+    return True
+
+
+def run_index(session, options):
+    gs.message(_("Reading the interface of every installed tool..."))
+    failed = session.catalog.describe_all()
+    gs.message(
+        _("{n} tools described, {f} unreadable.").format(
+            n=len(session.catalog.modules) - len(failed), f=len(failed)
+        )
+    )
+    if failed:
+        gs.verbose(_("Unreadable: {}").format(", ".join(failed)))
+    gs.message(_("Indexing the manual pages..."))
+    session.manual.build_lexical(progress=True)
+    gs.message(_("{n} manual sections indexed.").format(n=len(session.manual.chunks)))
+    if session.backend is None:
+        return
+    from iai_llm import BackendError
+
+    try:
+        session.backend.embed(["test"])
+    except BackendError as error:
+        gs.message(
+            _("No embeddings ({}); manual search will use keywords.").format(error)
+        )
+        return
+    gs.message(_("Embedding the manual sections..."))
+    session.manual.build_dense()
+
+
+def interactive_loop(session, flags, output_format, store, session_name):
+    gs.message(
+        _(
+            "i.ai interactive dialog. Commands: /run (execute the last plan), /plan, "
+            "/context, /reset, /exit."
+        )
+    )
+    last = None
+    while True:
+        try:
+            text = input("i.ai> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not text:
+            continue
+        if text in ("/exit", "/quit", "exit", "quit", "i.ai close"):
+            break
+        if text == "/context":
+            print(session.context.for_prompt())
+            continue
+        if text == "/reset":
+            session.context.history = []
+            session.context.last_plan = []
+            last = None
+            gs.message(_("Dialog history cleared."))
+            continue
+        if text == "/plan":
+            if last and last.get("plan"):
+                print_result({"kind": "plan", "plan": last["plan"]}, output_format)
             else:
-                return f"Error: Failed to get response from Ollama (HTTP {response.status_code})"
-                
-        except Exception as e:
-            return f"Error: {str(e)}"
-    
-    def extract_and_execute_commands(self, response):
-        """Extract and execute GRASS/GDAL/Linux commands"""
-        # Pattern to match command lines
-        command_patterns = [
-            r'\b(g\.\w+(?:\s+[^\s\n]+)*)',  # GRASS commands
-            r'\b(r\.\w+(?:\s+[^\s\n]+)*)',  # Raster commands
-            r'\b(v\.\w+(?:\s+[^\s\n]+)*)',  # Vector commands
-            r'\b(i\.\w+(?:\s+[^\s\n]+)*)',  # Imagery commands
-            r'\b(db\.\w+(?:\s+[^\s\n]+)*)', # Database commands
-            r'\b(t\.\w+(?:\s+[^\s\n]+)*)',  # Temporal commands
-            r'\b(m\.\w+(?:\s+[^\s\n]+)*)',  # Misc commands
-            r'\b(gdal\w+(?:\s+[^\s\n]+)*)',  # GDAL commands
-            r'\b(wget|curl|unzip|tar|gzip|awk|sed|grep)(?:\s+[^\s\n]+)*',  # Linux tools
-        ]
-        
-        executed_commands = []
-        
-        for pattern in command_patterns:
-            matches = re.findall(pattern, response, re.IGNORECASE | re.MULTILINE)
-            for match in matches:
-                if match not in executed_commands:
-                    executed_commands.append(match)
-        
-        if executed_commands:
-            gs.message(f"\n🔧 Executing {len(executed_commands)} commands:")
-            
-            for i, cmd in enumerate(executed_commands, 1):
-                gs.message(f"\n{i}. {cmd}")
-                
-                try:
-                    if cmd.startswith(('g.', 'r.', 'v.', 'i.', 'db.', 't.', 'm.', 'd.', 'ps.', 'r3.')):
-                        # GRASS command
-                        parts = cmd.split()
-                        module = parts[0]
-                        params = {}
-                        
-                        for part in parts[1:]:
-                            if '=' in part:
-                                key, value = part.split('=', 1)
-                                params[key] = value
-                            else:
-                                params['input'] = part
-                        
-                        result = gs.read_command(module, **params)
-                        gs.message("✅ Success:")
-                        gs.message(result[:500] + "..." if len(result) > 500 else result)
-                        
-                    elif cmd.startswith('gdal') or any(tool in cmd for tool in ['wget', 'curl', 'unzip', 'tar', 'gzip', 'awk', 'sed', 'grep']):
-                        # System command
-                        result = subprocess.run(cmd.split(), capture_output=True, text=True, timeout=60)
-                        if result.returncode == 0:
-                            gs.message("✅ Success:")
-                            gs.message(result.stdout[:500] + "..." if len(result.stdout) > 500 else result.stdout)
-                        else:
-                            gs.warning(f"❌ Failed: {result.stderr}")
-                    else:
-                        gs.warning(f"⚠️ Unknown command type: {cmd}")
-                        
-                except Exception as e:
-                    gs.warning(f"❌ Error executing {cmd}: {e}")
-        
-        return executed_commands
+                gs.message(_("No plan yet."))
+            continue
+        if text == "/run":
+            if last and last.get("plan"):
+                execute_plan(session, last["plan"], flags["y"], interactive=True)
+            else:
+                gs.message(_("No plan to run."))
+            continue
+        result = session.copilot.run(text)
+        print_result(result, output_format)
+        last = result if result.get("plan") else last
+        if result.get("plan") and flags["e"] and confirm(_("Run this plan?")):
+            execute_plan(session, result["plan"], flags["y"], interactive=True)
+        if store:
+            store.save(session_name, session.context)
+
 
 def main():
-    query = options['query']
-    model = options['model']
-    ollama_url = options['ollama_url']
-    session_id = options['session']
-    execute_flag = flags['e']
-    verbose = flags['v']
-    interactive = flags['i']
-    show_system = flags['s']
-    
-    iai = IAIGrassAddon()
-    
-    # Show system information if requested
-    if show_system:
-        system_info = iai.get_system_info()
-        gs.message("🌍 i.ai System Information:")
-        gs.message("=" * 50)
-        gs.message(f"GRASS Version: {system_info['grass_version']}")
-        gs.message(f"Database: {system_info['grass_db']}")
-        gs.message(f"Location: {system_info['grass_location']}")
-        gs.message(f"Mapset: {system_info['grass_mapset']}")
-        gs.message(f"GDAL Tools: {len(system_info['gdal_tools'])} available")
-        gs.message(f"Python Packages: {len(system_info['python_packages'])} available")
-        gs.message(f"System Tools: {len(system_info['system_tools'])} available")
-        
-        modules = iai.get_grass_modules()
-        total_modules = sum(len(modules[cat]) for cat in modules)
-        gs.message(f"GRASS Modules: {total_modules} total")
+    _load_library()
+    from iai_context import SessionStore
+
+    operation = options["operation"]
+    output_format = options["format"]
+
+    if operation == "info":
+        session = Session(options, need_backend=False)
+        if output_format == "json":
+            print(json.dumps(session.context.summary(), indent=2, default=str))
+        else:
+            print(session.context.for_prompt())
         return
-    
-    # Check Ollama service
-    try:
-        response = requests.get(f"{ollama_url}/api/tags", timeout=5)
-        if response.status_code != 200:
-            gs.fatal("❌ Ollama service is not running. Start it with: ollama serve &")
-    except:
-        gs.fatal("❌ Cannot connect to Ollama service")
-    
-    # Get session context
-    session_context = ""
-    if session_id:
-        # In a real implementation, you'd load session context from storage
-        session_context = f"Continuing session {session_id}"
-    
-    if verbose:
-        gs.message("🌍 i.ai - AI Assistant for GRASS GIS")
-        gs.message(f"🤖 Using model: {model}")
-        gs.message("📊 Analyzing query...")
-    
-    # Query AI
-    ai_response = iai.query_ollama(query, model, ollama_url, session_context)
-    
-    # Display response
-    gs.message("\n" + "="*70)
-    gs.message("🤖 AI Response:")
-    gs.message("="*70)
-    gs.message(ai_response)
-    gs.message("="*70)
-    
-    # Execute commands if requested
-    if execute_flag:
-        commands = iai.extract_and_execute_commands(ai_response)
-        if not commands:
-            gs.message("ℹ️ No executable commands found in response")
-    
-    # Interactive mode
-    if interactive:
-        gs.message("\n🔄 Interactive mode - Type 'i.ai close' to return to GRASS CLI")
-        while True:
-            try:
-                user_input = input("\ni.ai> ").strip()
-                if user_input.lower() in ['i.ai close', 'close', 'quit', 'exit', 'q']:
-                    gs.message("\n👋 Returning to GRASS GIS CLI...")
-                    break
-                
-                if user_input:
-                    response = iai.query_ollama(user_input, model, ollama_url, session_context)
-                    gs.message("\n" + "="*50)
-                    gs.message("🤖 AI Response:")
-                    gs.message("="*50)
-                    gs.message(response)
-                    gs.message("="*50)
-                    
-                    if execute_flag:
-                        iai.extract_and_execute_commands(response)
-                        
-            except KeyboardInterrupt:
-                break
-        
-        gs.message("👋 Exiting interactive mode")
+
+    if operation == "index":
+        need = options["backend"] in ("ollama", "openai") and bool(
+            options["embed_model"]
+        )
+        session = Session(options, need_backend=need)
+        run_index(session, options)
+        return
+
+    if not options["query"] and not flags["i"]:
+        gs.fatal(_("Give a query, or use -i for an interactive dialog"))
+
+    session = Session(options)
+    store = SessionStore() if options["session"] else None
+    if store and store.load(options["session"], session.context):
+        gs.verbose(_("Continuing session <{}>").format(options["session"]))
+
+    if options["query"]:
+        result = session.copilot.run(options["query"])
+        print_result(result, output_format)
+        if store:
+            store.save(options["session"], session.context)
+        if result["kind"] == "error" and not flags["i"]:
+            sys.exit(1)
+        if result.get("plan") and flags["e"]:
+            execute_plan(session, result["plan"], flags["y"], interactive=flags["i"])
+        elif result.get("plan") and not flags["i"]:
+            gs.message(_("Nothing was run; add -e to execute the plan."))
+
+    if flags["i"]:
+        interactive_loop(session, flags, output_format, store, options["session"])
+    session.catalog.save()
+
 
 if __name__ == "__main__":
-    try:
-        from grass.script import parser as grass_parser
-        options, flags = grass_parser()
-        main()
-    except ImportError:
-        print("This module must be run from within GRASS GIS")
-        print("Start GRASS GIS with: grass --text")
-        print("Then run: python3 iai_grass_addon.py query='your question'")
-        sys.exit(1)
+    options, flags = gs.parser()
+    sys.exit(main())

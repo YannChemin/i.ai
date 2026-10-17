@@ -2,12 +2,10 @@ MODULE_TOPDIR = ../..
 
 PGM = i.ai
 
+ETCFILES = iai_agents iai_catalog iai_context iai_llm iai_rag iai_registry \
+	iai_tools iai_validate
+
 include $(MODULE_TOPDIR)/include/Make/Script.make
+include $(MODULE_TOPDIR)/include/Make/Python.make
 
 default: script
-	if [ ! -d $(HTMLDIR) ]; then \
-		$(MKDIR) $(HTMLDIR); \
-	fi
-	if [ ! -f $(HTMLDIR)/$(PGM).html ] ; then \
-		$(INSTALL) -m 644 $(PGM).html $(HTMLDIR)/$(HTMLDIR)/$(PGM).html ; \
-	fi

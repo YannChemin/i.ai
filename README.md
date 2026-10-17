@@ -1,174 +1,61 @@
-# i.ai - AI Assistant for GRASS GIS
+# i.ai
 
-**i.ai** is a native GRASS GIS addon that integrates Ollama LLM with GRASS GIS for comprehensive geospatial analysis and remote sensing workflows.
+AI assistant for GRASS. It answers questions about the session and plans
+GRASS commands that are validated against the installed tools and the
+existing maps before anything runs. Every tool installed in the session,
+core or addon, is available to it.
 
-## Features
+Backends: Ollama, any OpenAI-compatible server, Claude Code (logged-in
+`claude` command, no API key) and OpenCode (free `opencode/big-pickle`
+model, no account).
 
-- **AI-Powered Analysis**: Uses Ollama LLM for intelligent geospatial guidance
-- **Native GRASS Integration**: Works directly within GRASS GIS text environment
-- **Comprehensive Module Knowledge**: Knows all GRASS modules (i.*, g.*, r.*, v.*, db.*, t.*, m.*, r3.*, d.*, ps.*)
-- **GDAL Tools Integration**: Access to 24+ GDAL command-line tools
-- **System Tools**: Linux utilities and package management (apt-cache)
-- **Environment Awareness**: Detects current database, location, mapset, and available maps
-- **Command Execution**: Can automatically execute suggested commands
+The agent design follows [GeoCopilot](https://github.com/yosgi/GeoCopilot):
+an intent agent routes each request to a clarification, query or
+execution agent; these work in JSON steps with read-only tools; plans go
+through a validation layer and only run with `-e`.
 
-## Quick Start
+## Install
 
-### 1. Install Addon
-```bash
+```sh
 make MODULE_TOPDIR=$HOME/dev/grass
 ```
 
-### 2. Start GRASS GIS
-```bash
-grass --text
+or, from a GRASS session, `g.extension i.ai url=$HOME/dev/i.ai`.
+
+## Use
+
+```sh
+i.ai backend=claude query="What is the mean of elevation over its own extent?"
+i.ai backend=opencode query="Compute slope in degrees from the DEM" -e
+i.ai backend=claude query="Compute NDVI from the Landsat bands" format=shell > ndvi.sh
+i.ai backend=claude -i                 # interactive dialog
+i.ai operation=info                    # what the assistant sees
+i.ai operation=index                   # cache every tool interface, index manuals
 ```
 
-### 3. Use i.ai
-```bash
-# Basic usage
-GRASS> i.ai "your question"
+See [i.ai.md](i.ai.md) for the full manual.
 
-# With automatic command execution
-GRASS> i.ai "calculate NDVI" -e
+## Files
 
-# Show system information
-GRASS> i.ai "test" -s
+| File | Role |
+|---|---|
+| `i.ai.py` | GRASS parser interface, output, plan execution |
+| `iai_llm.py` | Backends (ollama, openai, claude, opencode) |
+| `iai_catalog.py` | Live catalog of installed tools and their interfaces |
+| `iai_registry.py` | Maps in the search path, fuzzy and synonym matching |
+| `iai_validate.py` | Command parsing, validation and risk levels |
+| `iai_context.py` | Session context, dialog history, saved sessions |
+| `iai_tools.py` | Read-only tools the model calls |
+| `iai_rag.py` | Manual page search (BM25, optional embeddings) |
+| `iai_agents.py` | Intent, clarification, query and execution agents |
+| `tests/` | pytest suite (no language model needed) |
 
-# Interactive mode
-GRASS> i.ai "help me" -i
+## Tests
 
-# In interactive mode, type 'i.ai close' to return to GRASS CLI
+```sh
+grass --tmp-project XY --exec python3 -m pytest tests
 ```
 
-## Requirements
+## Licence
 
-- GRASS GIS 8.0+
-- Ollama service with a model installed
-- Python 3.8+
-
-### Setup Ollama
-```bash
-# Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# Start service
-ollama serve &
-
-# Download model
-ollama pull llama3.1:latest
-```
-
-## Usage Examples
-
-### Remote Sensing
-```bash
-GRASS> i.ai "calculate NDVI from Sentinel-2 bands"
-GRASS> i.ai "perform land cover classification"
-GRASS> i.ai "create vegetation index time series"
-```
-
-### Terrain Analysis
-```bash
-GRASS> i.ai "calculate slope and aspect from DEM"
-GRASS> i.ai "delineate watersheds"
-GRASS> i.ai "perform viewshed analysis"
-```
-
-### Data Management
-```bash
-GRASS> i.ai "import GeoTIFF files"
-GRASS> i.ai "reproject data to UTM"
-GRASS> i.ai "export results"
-```
-
-## Options
-
-### Parameters
-- `query`: Your question or task (required)
-- `model`: Ollama model to use (default: llama3.1:latest)
-- `ollama_url`: Ollama service URL (default: http://localhost:11434)
-- `session`: Continue previous session
-
-### Flags
-- `-e`: Execute suggested GRASS commands automatically
-- `-v`: Verbose output
-- `-i`: Interactive mode (stay in AI session)
-- `-s`: Show system information
-
-## System Capabilities
-
-i.ai has comprehensive knowledge of:
-
-### GRASS GIS Modules (110+ total)
-- **Imagery (i.*)**: 14 modules for satellite image processing
-- **General (g.*)**: 12 modules for data management
-- **Raster (r.*)**: 16 modules for raster analysis
-- **Vector (v.*)**: 15 modules for vector operations
-- **Database (db.*)**: 9 modules for database operations
-- **Temporal (t.*)**: 12 modules for time series analysis
-- **3D Raster (r3.*)**: 9 modules for volumetric data
-- **Display (d.*)**: 10 modules for visualization
-- **PostScript (ps.*)**: 5 modules for map output
-
-### GDAL Tools (24 available)
-- Data processing: gdal_translate, gdalwarp, gdalbuildvrt
-- Analysis: gdalinfo, gdaldem, gdal_calc.py
-- Conversion: gdal_rasterize, gdal_polygonize
-
-### System Tools
-- Download: wget, curl
-- Package management: apt, apt-cache
-- Text processing: awk, sed, grep
-- Archive: unzip, tar, gzip
-
-## Demo
-
-To see all system capabilities:
-```bash
-grass --text --exec python3 i.ai.py -s
-```
-
-## File Structure
-
-```
-i.ai/
-├── i.ai.py               # Main GRASS addon
-├── Makefile             # GRASS build system
-├── i.ai.md              # Manual page
-├── i.ai.html            # HTML documentation
-└── README.md             # This file
-```
-
-## Troubleshooting
-
-### Ollama Service Issues
-```bash
-# Check if running
-ps aux | grep ollama
-
-# Start service
-ollama serve &
-
-# Check models
-ollama list
-```
-
-### GRASS Environment
-```bash
-# Must run from within GRASS
-grass --text
-
-# Check environment
-g.gisenv
-```
-
-### Module Not Found
-```bash
-# Check installation
-ls ~/.grass8*/addons/scripts/
-
-# Manual installation
-cp i.ai.py ~/.grass8*/addons/scripts/i.ai
-chmod +x ~/.grass8*/addons/scripts/i.ai
-```
+[Unlicense](LICENSE).

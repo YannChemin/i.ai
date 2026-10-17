@@ -1,175 +1,188 @@
-# i.ai - AI Assistant for GRASS GIS
-
 ## DESCRIPTION
 
-i.ai is an AI assistant that integrates Ollama LLM with GRASS GIS for comprehensive geospatial analysis and remote sensing workflows. It provides intelligent assistance with full knowledge of GRASS GIS modules, GDAL tools, and system utilities.
+*i.ai* is an AI assistant that works inside the running GRASS session. It
+answers questions about the data, the session, methods and tools, and
+turns tasks into plans of GRASS commands that are validated before
+anything runs.
 
-## KEY FEATURES
+Every GRASS tool installed in the session is available to the assistant.
+This covers core tools and addons, so all of them can be found, read and
+proposed. The tool catalog is read from the live installation
+(`$GISBASE/bin`, `$GISBASE/scripts`, `$GRASS_ADDON_BASE/bin`,
+`$GRASS_ADDON_BASE/scripts` and `GRASS_ADDON_PATH`). Each tool's
+interface comes from its own `--interface-description`, so the assistant
+uses the parameters, flags and option values of the installed version.
 
-- **AI-Powered Analysis**: Uses Ollama LLM for intelligent geospatial guidance
-- **Native GRASS Integration**: Works directly within GRASS GIS environment
-- **Comprehensive Module Knowledge**: Knows all GRASS modules (i.*, g.*, r.*, v.*, db.*, t.*, m.*, r3.*, d.*, ps.*)
-- **GDAL Tools Integration**: Access to GDAL command-line tools
-- **System Tools**: Linux utilities and package management
-- **Environment Awareness**: Detects current database, location, mapset, and available maps
-- **Command Execution**: Can automatically execute suggested commands
+The language model can be:
 
-## USAGE
+- **ollama**: a local [Ollama](https://ollama.com) server;
+- **openai**: any OpenAI-compatible server (OpenAI, llama.cpp server,
+  vLLM, LM Studio...), with the key in `IAI_API_KEY` or `OPENAI_API_KEY`;
+- **claude**: [Claude Code](https://claude.com/claude-code) on the
+  user's logged-in account (the `claude` command), with no API key;
+- **opencode**: [OpenCode](https://opencode.ai), by default with the free
+  `opencode/big-pickle` model, which needs no account.
 
-### Basic Usage
-```
-i.ai "your question"
-```
+### How it works
 
-### With Options
-```
-i.ai "calculate NDVI" model=llama3.1:latest -e
-```
+The design follows
+[GeoCopilot](https://github.com/yosgi/GeoCopilot), an agent framework for
+3D scene control, adapted to GRASS:
 
-### Interactive Mode
-```
-i.ai "help me with terrain analysis" -i
-```
+1. An *intent agent* classifies each request as a task (execute), a
+   question (query), unclear (clarify), help or chat.
+2. Unclear requests go to a *clarification agent*. It asks what is
+   missing and suggests complete requests that use real map names.
+3. Questions go to a *query agent*. Tasks go to an *execution agent*.
+   Both work in steps. In each step the model either calls one read-only
+   tool, answers, asks for clarification, or (execution agent only)
+   proposes a plan.
+4. Each plan goes through a *validation layer* (see below). Any errors go
+   back to the agent, which fixes the plan, until the plan is valid or the
+   step budget (**max\_steps**) is spent.
 
-In interactive mode, type 'i.ai close' to return to GRASS CLI.
+The read-only tools available to the model are:
 
-### System Information
-```
-i.ai "test" -s
-```
+- search all installed tools by keywords;
+- list every tool with a given prefix;
+- read the full interface of a tool;
+- search the installed manual pages;
+- list maps and match the user's words to existing maps;
+- read map metadata and the computational region;
+- validate a command without running it;
+- run read-only commands (statistics, queries, metadata such as
+  *r.univar* or *v.info*).
 
-## OPTIONS
+Read-only commands can run on a raster map's own region through a scoped
+region manager, so the user's computational region never changes. The
+session context sent to the model holds the project, mapset, CRS,
+computational region, mask status, the maps in the search path and the
+installed tools.
 
-### Parameters
-- **query**: Your question or task for the AI assistant (required)
-- **model**: Ollama model to use (default: llama3.1:latest)
-- **ollama_url**: Ollama service URL (default: http://localhost:11434)
-- **session**: Continue previous session (session ID)
+### Validation and safety
 
-### Flags
-- **-e**: Execute suggested GRASS commands automatically
-- **-v**: Verbose output
-- **-i**: Interactive mode (stay in AI session)
-- **-s**: Show system information
+Nothing the model proposes runs unchecked. Each command is checked
+against the live interface of the installed tool and against the existing
+maps. The following are errors, reported with suggestions when a close
+match exists:
+
+- unknown tools, parameters, flags and option values, and values of the
+  wrong type;
+- missing required parameters;
+- input maps that do not exist, including maps used in *r.mapcalc*
+  expressions (an output of an earlier plan step counts as existing);
+- output maps that already exist (without **--overwrite**) and illegal
+  map names.
+
+Nothing is corrected silently. Each valid command also gets a risk level:
+
+- **read**: only reads data or prints state;
+- **create**: only writes new maps or files;
+- **modify**: changes existing data or session state. This includes the
+  region, the mask, database tables, removals, renames and colour tables.
+  Any tool not known to be read-only and with no declared output also
+  counts as **modify**.
+
+Plans run only with the **-e** flag. Each step is validated again just
+before it runs. A **modify** step needs a *yes* at the terminal, or the
+**-y** flag; without either, the plan stops before that step. Only GRASS
+tools run, and never through a shell. Interactive tools (such as
+*g.gui* or *d.mon*) are refused. **--overwrite** is never added by the
+model; it applies only when the user passes it to *i.ai*.
+
+The command-line backends cannot touch the session themselves.
+*claude* runs with all its built-in tools disabled and a JSON schema for
+the reply. *opencode* runs its read-only *plan* agent in an empty
+temporary directory, without auto-approved permissions.
+
+### Sessions and output
+
+With **session**, the dialog history and the last plan are saved under
+`$XDG_DATA_HOME/i.ai/sessions/` (by default `~/.local/share/i.ai/`), so a
+conversation can continue across calls. The **format** option prints the
+answer and plan as text (**plain**), the full result as JSON (**json**),
+or the plan as a shell script to review and run later (**shell**).
+
+The **-i** flag starts an interactive dialog. Its commands are `/run`
+(execute the last plan), `/plan`, `/context`, `/reset` and `/exit`.
+
+### Operations
+
+- **ask** (default): answer the **query**, or plan commands for it.
+- **info**: print the session context that the assistant sees. No model
+  is needed.
+- **index**: read the interface of every installed tool into the cache
+  and index the manual pages. With **embed\_model** (ollama and openai
+  backends), it also embeds the manual sections, and manual searches then
+  use cosine similarity instead of BM25 keyword ranking. Caches are kept
+  in `$XDG_CACHE_HOME/i.ai/` (by default `~/.cache/i.ai/`).
+
+## NOTES
+
+The answer goes to standard output; messages and progress go to standard
+error. Plan execution reports its progress through `G_percent()`.
+
+Small local models often struggle to follow the JSON step protocol.
+Models that are good at tool use give the best plans. When the
+**ollama** backend has no **model**, the first installed model is used.
 
 ## EXAMPLES
 
-### Remote Sensing
-```
-# Calculate NDVI
-i.ai "calculate NDVI from Sentinel-2 bands"
+Ask a question with Claude Code:
 
-# Land cover classification
-i.ai "perform supervised classification on satellite image"
-
-# Time series analysis
-i.ai "create vegetation index time series from MODIS data"
+```sh
+i.ai backend=claude query="Which Landsat bands are in this project, and what is the mean of elevation over its own extent?"
 ```
 
-### Terrain Analysis
-```
-# Basic terrain analysis
-i.ai "calculate slope and aspect from DEM"
+Plan a task with OpenCode Big Pickle, review the plan, then execute it:
 
-# Watershed delineation
-i.ai "delineate watersheds from elevation data"
-
-# Viewshed analysis
-i.ai "perform viewshed analysis from observation points"
+```sh
+i.ai backend=opencode query="Compute slope in degrees from the DEM, then smooth it with a 5x5 average"
+i.ai backend=opencode query="Compute slope in degrees from the DEM, then smooth it with a 5x5 average" -e
 ```
 
-### Data Management
-```
-# Import data
-i.ai "import GeoTIFF files into GRASS"
+Write the plan as a shell script:
 
-# Reprojection
-i.ai "reproject data to UTM zone 33N"
-
-# Export results
-i.ai "export raster maps to GeoTIFF format"
+```sh
+i.ai backend=claude query="Compute NDVI from the 2002 Landsat 7 bands" format=shell > ndvi.sh
 ```
 
-### With Command Execution
+Continue a named dialog:
+
+```sh
+i.ai backend=claude session=wake query="Delineate the watersheds of the elevation map"
+i.ai backend=claude session=wake query="Now keep only basins larger than 1 km2" -e
 ```
-# Execute suggested commands automatically
-i.ai "import all GeoTIFF files and create NDVI" -e
+
+Use an OpenAI-compatible server, here a local llama.cpp server:
+
+```sh
+i.ai backend=openai url=http://localhost:8080/v1 model=qwen3 query="..."
+```
+
+Show what the assistant sees, and build the caches:
+
+```sh
+i.ai operation=info
+i.ai operation=index
 ```
 
 ## REQUIREMENTS
 
-- GRASS GIS 8.0+
-- Ollama service running with a model installed
-- Python 3.8+
-- Internet connection for AI queries
-
-## SETUP
-
-### Install Ollama
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama serve &
-ollama pull llama3.1:latest
-```
-
-### Install Addon
-```bash
-# Copy to GRASS addons directory
-cp i.ai.py ~/.grass8/addons/scripts/i.ai
-chmod +x ~/.grass8/addons/scripts/i.ai
-```
-
-## SYSTEM CAPABILITIES
-
-i.ai has comprehensive knowledge of:
-
-### GRASS GIS Modules (110+ total)
-- **Imagery (i.*)**: 14 modules for satellite image processing
-- **General (g.*)**: 12 modules for data management
-- **Raster (r.*)**: 16 modules for raster analysis
-- **Vector (v.*)**: 15 modules for vector operations
-- **Database (db.*)**: 9 modules for database operations
-- **Temporal (t.*)**: 12 modules for time series analysis
-- **3D Raster (r3.*)**: 9 modules for volumetric data
-- **Display (d.*)**: 10 modules for visualization
-- **PostScript (ps.*)**: 5 modules for map output
-
-### GDAL Tools
-- Data processing: gdal_translate, gdalwarp, gdalbuildvrt
-- Analysis: gdalinfo, gdaldem, gdal_calc.py
-- Conversion: gdal_rasterize, gdal_polygonize
-
-### System Tools
-- Download: wget, curl
-- Package management: apt, apt-cache
-- Text processing: awk, sed, grep
-- Archive: unzip, tar, gzip
-
-## TROUBLESHOOTING
-
-### Ollama Service Issues
-```bash
-# Check if running
-ps aux | grep ollama
-
-# Start service
-ollama serve &
-
-# Check models
-ollama list
-```
-
-### Common Errors
-- **"This module must be run from within GRASS GIS"**: Start GRASS with `grass --text`
-- **"Ollama service is not running"**: Start Ollama service with `ollama serve &`
-- **"Model not found"**: Download model with `ollama pull llama3.1:latest`
-
-## AUTHOR
-
-i.ai - AI Assistant for GRASS GIS
+- GRASS 8.4 or later (8.5 or later for *r.mask.status*).
+- One backend: Ollama, an OpenAI-compatible server, the `claude` command
+  (logged in), or the `opencode` command.
+- NumPy, only for the embedding index.
 
 ## SEE ALSO
 
-- GRASS GIS reference manual
-- Ollama documentation
-- GDAL documentation
+*[g.search.modules](https://grass.osgeo.org/grass-stable/manuals/g.search.modules.html),
+[r.mapcalc](https://grass.osgeo.org/grass-stable/manuals/r.mapcalc.html),
+[r.univar](https://grass.osgeo.org/grass-stable/manuals/r.univar.html)*
+
+[GeoCopilot](https://github.com/yosgi/GeoCopilot), whose agent architecture
+*i.ai* follows.
+
+## AUTHORS
+
+Yann Chemin
