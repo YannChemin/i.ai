@@ -232,7 +232,7 @@ def gpu_search(target):
 class WhisperServer:
     """whisper-server on a GPU machine: this one, or a server over an ssh tunnel."""
 
-    def __init__(self, language="auto", host=None, user=None, threads=4):
+    def __init__(self, language="en", host=None, user=None, threads=4):
         self.language = language
         self.target = Target(host, user)
         self.threads = threads
@@ -331,14 +331,28 @@ class WhisperServer:
                 self.gpu = match.group(1).strip()
         ended.set()  # The process ended: start() reports why.
 
-    def transcribe(self, wav_path, timeout=120):
-        """Return the text of a WAV file."""
+    def transcribe(self, wav_path, prompt="", timeout=120, language=None):
+        """Return the text of a WAV file.
+
+        :param str prompt: Vocabulary that conditions the decoding (map
+            names, GRASS terms), so they are heard as such
+        """
         if self.process is None or self.process.poll() is not None:
             raise VoiceError("whisper-server is not running")
         boundary = uuid.uuid4().hex
         with open(wav_path, "rb") as handle:
             audio = handle.read()
-        fields = {"response_format": "json", "temperature": "0.0"}
+        # No temperature fallback: on silence or noise, whisper otherwise
+        # retries at higher temperatures for tens of seconds.
+        fields = {
+            "response_format": "json",
+            "temperature": "0.0",
+            "temperature_inc": "0.0",
+        }
+        if prompt:
+            fields["prompt"] = prompt[:MAX_PROMPT]
+        if language:
+            fields["language"] = language  # Overrides the server's -l.
         body = b""
         for key, value in fields.items():
             body += '--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.format(
@@ -397,6 +411,26 @@ NON_SPEECH = re.compile(
 )
 
 
+# Whisper keeps at most 224 prompt tokens; about 4 characters per token.
+MAX_PROMPT = 800
+GRASS_VOCABULARY = (
+    "GRASS GIS, raster, vector, 3D raster, mapset, project, region, mask, "
+    "elevation, slope, aspect, NDVI, hyperspectral, watershed, flow accumulation, "
+    "stream network, r.univar, r.slope.aspect, r.watershed, r.mapcalc, v.buffer, "
+    "i.ai, Sentinel-2, Landsat, EMIT, PRISMA, EnMAP"
+)
+
+
+def vocabulary(names=()):
+    """Return a decoding prompt: GRASS terms, then map names."""
+    text = GRASS_VOCABULARY
+    for name in names:
+        if len(text) + len(name) + 2 > MAX_PROMPT:
+            break
+        text += ", " + name
+    return text + "."
+
+
 def clean_text(text):
     text = NON_SPEECH.sub(" ", text)
     return re.sub(r"\s+", " ", text).strip()
@@ -406,11 +440,18 @@ class VoiceInput:
     """Push-to-talk: Enter starts recording, Enter stops, text comes back."""
 
     def __init__(
-        self, language="auto", host=None, user=None, device=None, message=print
+        self,
+        language="en",
+        host=None,
+        user=None,
+        device=None,
+        message=print,
+        names=(),
     ):
         self.message = message
         self.recorder = Recorder(device)
         self.server = WhisperServer(language, host, user)
+        self.prompt = vocabulary(names)
         self.tmp = tempfile.mkdtemp(prefix="i.ai-voice-")
 
     def start(self):
@@ -436,7 +477,7 @@ class VoiceInput:
         try:
             if seconds < 0.3:
                 return ""
-            return self.server.transcribe(path)
+            return self.server.transcribe(path, self.prompt)
         finally:
             if path and os.path.exists(path):
                 os.remove(path)  # Speech is not kept.

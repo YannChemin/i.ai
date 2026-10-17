@@ -1,0 +1,1 @@
+Open a display window, show the elevation map with a legend, a north arrow and a scale bar, wait three seconds, then close the display.

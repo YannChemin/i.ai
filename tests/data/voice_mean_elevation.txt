@@ -1,0 +1,1 @@
+What is the mean elevation of the elevation map over its own extent?

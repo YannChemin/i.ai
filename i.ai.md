@@ -116,7 +116,10 @@ before it runs. A **modify** or **network** step needs a *yes* at the
 terminal, or the **-y** flag; without either, the plan stops before that
 step. GRASS steps run directly; command-line steps run with *bash* in the
 session's workspace (or the current directory). Interactive tools (such
-as *g.gui* or *d.mon*) are refused. **--overwrite** is never added by the
+as *g.gui* or *v.digit*) are refused. Display tools (*d.mon*, *d.rast*,
+*d.legend*, ...) get the **display** risk level: they draw on a monitor
+and run without confirmation, but never as a read-only lookup while the
+model works out its answer. **--overwrite** is never added by the
 model to GRASS steps; it applies only when the user passes it to *i.ai*.
 
 The command-line backends cannot touch the session themselves.
@@ -212,7 +215,11 @@ server it is reached through an ssh tunnel on a random port bound to
 127.0.0.1. It must report its GPU backend (`whisper_backend_init_gpu:
 using ...`), or voice input stops with the reason. The server process is
 stopped when *i.ai* exits. **voice\_language** sets the spoken language
-(`auto` by default; `en`, `fr`, ...).
+(`en` by default; `fr`, ..., or `auto` to detect it). Automatic
+detection is not the default because it is unreliable with an accent: it
+can pick the speaker's native language and transcribe an English request
+in French. The prompt passed to whisper holds GRASS
+terms and the session's map names, so they are heard as such.
 
 ### Sessions and output
 
@@ -312,13 +319,13 @@ cd ~/Documents/LaTex/Report/20261017_Terrain && make
 Speak the requests of a dialog, transcribed on a GPU server:
 
 ```sh
-i.ai backend=claude -i input=voice voice_host=10.42.0.89 voice_user=yann
+i.ai backend=claude -i input=voice voice_host=192.0.2.10 voice_user=yann
 ```
 
 Or set the server once and speak a single request:
 
 ```sh
-export IAI_VOICE_HOST=10.42.0.89 IAI_VOICE_USER=yann
+export IAI_VOICE_HOST=192.0.2.10 IAI_VOICE_USER=yann
 i.ai backend=claude input=voice
 ```
 

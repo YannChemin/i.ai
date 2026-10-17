@@ -108,7 +108,10 @@ before it runs. A <strong>modify</strong> or <strong>network</strong> step needs
 terminal, or the <strong>-y</strong> flag; without either, the plan stops before that
 step. GRASS steps run directly; command-line steps run with <em>bash</em> in the
 session's workspace (or the current directory). Interactive tools (such
-as <em>g.gui</em> or <em>d.mon</em>) are refused. <strong>--overwrite</strong> is never added by the
+as <em>g.gui</em> or <em>v.digit</em>) are refused. Display tools (<em>d.mon</em>, <em>d.rast</em>,
+<em>d.legend</em>, ...) get the <strong>display</strong> risk level: they draw on a monitor
+and run without confirmation, but never as a read-only lookup while the
+model works out its answer. <strong>--overwrite</strong> is never added by the
 model to GRASS steps; it applies only when the user passes it to <em>i.ai</em>.</p>
 <p>The command-line backends cannot touch the session themselves.
 <em>claude</em> runs with all its built-in tools disabled and a JSON schema for
@@ -196,7 +199,11 @@ server it is reached through an ssh tunnel on a random port bound to
 127.0.0.1. It must report its GPU backend (<code>whisper_backend_init_gpu:
 using ...</code>), or voice input stops with the reason. The server process is
 stopped when <em>i.ai</em> exits. <strong>voice_language</strong> sets the spoken language
-(<code>auto</code> by default; <code>en</code>, <code>fr</code>, ...).</p>
+(<code>en</code> by default; <code>fr</code>, ..., or <code>auto</code> to detect it). Automatic
+detection is not the default because it is unreliable with an accent: it
+can pick the speaker's native language and transcribe an English request
+in French. The prompt passed to whisper holds GRASS
+terms and the session's map names, so they are heard as such.</p>
 <h3>Sessions and output</h3>
 <p>With <strong>session</strong>, the dialog history and the last plan are saved under
 <code>$XDG_DATA_HOME/i.ai/sessions/</code> (by default <code>~/.local/share/i.ai/</code>), so a
@@ -261,10 +268,10 @@ compile the PDF:</p>
 <div class="code"><pre>cd ~/Documents/LaTex/Report/20261017_Terrain &amp;&amp; make
 </pre></div>
 <p>Speak the requests of a dialog, transcribed on a GPU server:</p>
-<div class="code"><pre>i.ai backend=claude -i input=voice voice_host=10.42.0.89 voice_user=yann
+<div class="code"><pre>i.ai backend=claude -i input=voice voice_host=192.0.2.10 voice_user=yann
 </pre></div>
 <p>Or set the server once and speak a single request:</p>
-<div class="code"><pre>export IAI_VOICE_HOST=10.42.0.89 IAI_VOICE_USER=yann
+<div class="code"><pre>export IAI_VOICE_HOST=192.0.2.10 IAI_VOICE_USER=yann
 i.ai backend=claude input=voice
 </pre></div>
 <p>Mix GRASS and command-line steps in a plan:</p>

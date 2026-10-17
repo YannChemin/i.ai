@@ -89,3 +89,11 @@ def test_catalog_lists_every_installed_tool(parts):
     assert catalog.exists("v.extract")
     assert len(catalog.names("r")) > 100
     assert catalog.search("slope aspect elevation")[0]["name"] == "r.slope.aspect"
+
+
+def test_display_tools(parts):
+    validator = parts[3]
+    start = validator.validate(Command("d.mon", {"start": "wx0"}))
+    assert start.valid and start.risk == "display"
+    assert validator.validate(Command("d.rast", {"map": "elevation"})).risk == "display"
+    assert not validator.validate(Command("g.gui", {})).valid

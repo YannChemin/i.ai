@@ -15,6 +15,8 @@ Each valid command also gets a risk level:
 
 - read: only reads data or prints session state; may run automatically.
 - create: writes new maps or files and nothing else.
+- display: a d.* tool that draws on a monitor and changes no data; runs
+  without confirmation in a plan, but not as a read-only lookup.
 - modify: changes existing data or session state (region, mask, database
   tables, removals, colour tables...), or a tool that is not known to be
   read-only and has no declared output. These always need confirmation.
@@ -67,7 +69,7 @@ READ_WHEN = {
 MODIFY_WITH_OUTPUT = {"g.rename", "g.region", "r.mask", "v.edit", "t.rename"}
 
 # Tools that need an interactive GUI or terminal and cannot run from i.ai.
-INTERACTIVE = re.compile(r"^(g\.gui(\..*)?|d\.mon|g\.manual|v\.digit|i\.ask)$")
+INTERACTIVE = re.compile(r"^(g\.gui(\..*)?|g\.manual|v\.digit|i\.ask)$")
 
 MAP_PROMPTS = {"raster", "vector", "raster_3d", "group", "strds", "stvds", "str3ds"}
 POSITIONAL = "__positional__"
@@ -431,6 +433,9 @@ class ValidationLayer:
 
     def _risk(self, command, info, result):
         name = command.module
+        if name.startswith("d.") and not result.outputs:
+            # Display tools draw on a monitor (d.mon) and change no data.
+            return "display"
         if result.outputs or any(
             p.get("age") == "new" and p["name"] in command.params
             for p in info.get("params", [])

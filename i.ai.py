@@ -166,8 +166,8 @@
 # % key: voice_language
 # % type: string
 # % required: no
-# % answer: auto
-# % description: Spoken language for transcription (auto, en, fr, ...)
+# % answer: en
+# % description: Spoken language for transcription (en, fr, ..., or auto to detect it)
 # % guisection: Voice
 # %end
 
@@ -706,7 +706,7 @@ def run_index(session, options):
     session.manual.build_dense()
 
 
-def start_voice(options):
+def start_voice(options, session=None):
     """Start voice input on the GPU machine, or fail with what to fix."""
     from iai_voice import VoiceError, VoiceInput
 
@@ -716,10 +716,12 @@ def start_voice(options):
         gs.fatal(_("Voice input needs a terminal (Enter starts and stops recording)"))
     try:
         voice = VoiceInput(
-            language=options["voice_language"] or "auto",
+            language=options["voice_language"] or "en",
             host=host or None,
             user=user or None,
             message=gs.message,
+            # Map names of the session, so they are heard as such.
+            names=[e["name"] for e in session.registry.entities] if session else (),
         )
         voice.start()
     except VoiceError as error:
@@ -866,7 +868,7 @@ def main():
         gs.fatal(_("Give a query, use -i for an interactive dialog, or input=voice"))
 
     session = Session(options)
-    voice = start_voice(options) if voice_mode else None
+    voice = start_voice(options, session) if voice_mode else None
     try:
         return ask(session, options, flags, store, voice)
     finally:
