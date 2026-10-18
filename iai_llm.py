@@ -278,6 +278,7 @@ class OpenAIBackend(Backend):
         self.max_wait = max_wait
         self.mode = self.modes[0]
         self.notify = lambda message: None  # i.ai sets gs.message.
+        self.verbose = lambda message: None  # i.ai sets gs.verbose.
 
     def _headers(self):
         return {"Authorization": "Bearer " + self.key} if self.key else {}
@@ -375,7 +376,13 @@ class OpenAIBackend(Backend):
             except HTTPError as error:
                 # A server that does not support this output mode says 400 or 422.
                 if error.code in (400, 422) and self.mode != self.modes[-1]:
+                    old = self.mode
                     self.mode = self.modes[self.modes.index(self.mode) + 1]
+                    self.verbose(
+                        "{} refused {} output ({}); using {}".format(
+                            self.url, old, error.server_message[:120], self.mode
+                        )
+                    )
                     continue
                 raise
             choices = reply.get("choices") or [{}]

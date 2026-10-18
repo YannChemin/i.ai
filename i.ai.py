@@ -329,6 +329,7 @@ class Session:
             )
             # Rate-limit waits and similar notes from the backend.
             self.backend.notify = gs.message
+            self.backend.verbose = gs.verbose
             try:
                 self.backend.check()
             except BackendError as error:

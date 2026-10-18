@@ -80,6 +80,7 @@ Create a personal access token on [Helmholtz Codebase](https://codebase.helmholt
 chmod 600 ~/.blablador_key
 i.ai -i backend=blablador api_key_file=~/.blablador_key                    # alias-large
 i.ai -i backend=blablador model=alias-fast api_key_file=~/.blablador_key   # faster, higher rate limit
+i.ai -i backend=blablador model=alias-eve api_key_file=~/.blablador_key    # Earth Observation expert model
 ```
 
 Or `export BLABLADOR_API_KEY=...` instead of `api_key_file=`. Any other
