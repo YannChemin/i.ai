@@ -11,7 +11,8 @@ Requests are typed, or spoken (`input=voice`) and transcribed by
 whisper.cpp on a GPU: this machine's, or a GPU server's (`voice_host`,
 `voice_user`), never on a CPU.
 
-Backends: Ollama, any OpenAI-compatible server, Claude Code (logged-in
+Backends: Ollama, any OpenAI-compatible server with an API key,
+Blablador (Helmholtz AI, open for research and teaching), Claude Code (logged-in
 `claude` command, no API key) and OpenCode (free `opencode/big-pickle`
 model, no account).
 
@@ -67,6 +68,26 @@ In the dialog, each plan is offered to run, and saying or typing *do it*
 GRASS command line: a line starting with a GRASS tool (`d.mon
 start=wx0`) runs directly, and a line starting with `!` runs a shell
 command; both are validated first.
+
+### Blablador (Helmholtz AI, for research and teaching)
+
+[Blablador](https://sdlaml.pages.jsc.fz-juelich.de/ai/guides/blablador_api_access/)
+is the Helmholtz AI service at Jülich, open for research and teaching.
+Create a personal access token on [Helmholtz Codebase](https://codebase.helmholtz.cloud)
+(user settings, `read_user` scope), save it in a private file, then:
+
+```sh
+chmod 600 ~/.blablador_key
+i.ai -i backend=blablador api_key_file=~/.blablador_key                    # alias-large
+i.ai -i backend=blablador model=alias-fast api_key_file=~/.blablador_key   # faster, higher rate limit
+```
+
+Or `export BLABLADOR_API_KEY=...` instead of `api_key_file=`. Any other
+OpenAI-compatible service works the same way with `backend=openai
+url=<base URL> model=<name>` and its key in `api_key_file=` or
+`IAI_API_KEY`. i.ai checks the key and the model at start, waits out
+rate limits (HTTP 429), and falls back to plain JSON prompting on
+servers without structured output.
 
 ### OpenCode Big Pickle (free, no account)
 

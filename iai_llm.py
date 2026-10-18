@@ -18,10 +18,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 
-BACKENDS = ("ollama", "openai", "claude", "opencode")
+BACKENDS = ("ollama", "openai", "blablador", "claude", "opencode")
 
 
 class BackendError(RuntimeError):
@@ -40,7 +41,10 @@ def extract_json(text):
     """
     if not text:
         raise BackendError("Empty reply from the language model")
-    text = text.strip()
+    # Reasoning models (Qwen3, DeepSeek-R1...) may think aloud before the answer.
+    text = re.sub(r"(?s)<think>.*?</think>", "", text).strip()
+    if not text:
+        raise BackendError("The language model replied with reasoning only")
     try:
         value = json.loads(text)
         if isinstance(value, dict):
@@ -189,58 +193,214 @@ class OllamaBackend(Backend):
         return vectors
 
 
-class OpenAIBackend(Backend):
-    """Any OpenAI-compatible chat completions server.
+class HTTPError(BackendError):
+    """An HTTP error answer, with its status code and server message."""
 
-    This covers OpenAI itself, llama.cpp server, vLLM, LM Studio and
-    similar. The key is read from IAI_API_KEY, then OPENAI_API_KEY.
+    def __init__(self, code, url, message, retry_after=None):
+        super().__init__("HTTP {} from {}: {}".format(code, url, message))
+        self.code = code
+        self.server_message = message
+        self.retry_after = retry_after
+
+
+def _request(url, payload=None, headers=None, timeout=300):
+    """Send a GET (no payload) or JSON POST; return the decoded JSON reply."""
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(url, data=data, method="POST" if data else "GET")
+    if data:
+        request.add_header("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        request.add_header(key, value)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", "replace")[:1000]
+        try:
+            message = json.loads(body).get("error", {})
+            message = (
+                message.get("message", body) if isinstance(message, dict) else message
+            )
+        except (ValueError, AttributeError):
+            message = body
+        retry = error.headers.get("Retry-After") if error.headers else None
+        if retry is None:
+            # Some servers give the wait only in the message ("retry in 37 s").
+            found = re.search(r"(\d+(?:\.\d+)?)\s*(?:s\b|sec|second)", str(message))
+            retry = found.group(1) if found else None
+        try:
+            retry = float(retry) if retry is not None else None
+        except ValueError:
+            retry = None
+        raise HTTPError(error.code, url, str(message).strip(), retry)
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        raise BackendError("Cannot reach {}: {}".format(url, error))
+    except ValueError as error:
+        raise BackendError("{} did not answer with JSON: {}".format(url, error))
+
+
+class OpenAIBackend(Backend):
+    """Any OpenAI-compatible chat completions server with an API key.
+
+    This covers OpenAI itself, llama.cpp server, vLLM, LM Studio, academic
+    services such as Blablador, and similar. The key comes from api_key_file
+    (read by i.ai) or the environment (IAI_API_KEY, then OPENAI_API_KEY).
+
+    Structured output is requested as a JSON schema; a server that rejects
+    it gets JSON mode, then a plain request with the schema in the prompt.
+    The level that works is kept for the rest of the session. Rate-limited
+    calls (HTTP 429) are retried after the wait the server asks for, within
+    max_wait seconds in total per call.
     """
 
     name = "openai"
+    default_url = "https://api.openai.com/v1"
+    default_model = None
+    default_embed_model = "text-embedding-3-small"
+    key_variables = ("IAI_API_KEY", "OPENAI_API_KEY")
+    modes = ("json_schema", "json_object", "prompt")
 
-    def __init__(self, model=None, url=None, timeout=300, embed_model=None):
-        super().__init__(model, url or "https://api.openai.com/v1", timeout)
+    def __init__(
+        self,
+        model=None,
+        url=None,
+        timeout=300,
+        embed_model=None,
+        key=None,
+        max_wait=180,
+    ):
+        super().__init__(model or self.default_model, url or self.default_url, timeout)
         self.url = self.url.rstrip("/")
-        self.embed_model = embed_model or "text-embedding-3-small"
-        self.key = os.environ.get("IAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.embed_model = embed_model or self.default_embed_model
+        self.key = key or next(
+            (os.environ[v] for v in self.key_variables if os.environ.get(v)), None
+        )
+        self.max_wait = max_wait
+        self.mode = self.modes[0]
+        self.notify = lambda message: None  # i.ai sets gs.message.
 
     def _headers(self):
         return {"Authorization": "Bearer " + self.key} if self.key else {}
 
+    def _call(self, path, payload=None, timeout=None):
+        """Call the API, waiting out rate limits, with readable errors."""
+        url = self.url + path
+        waited = 0.0
+        while True:
+            try:
+                return _request(url, payload, self._headers(), timeout or self.timeout)
+            except HTTPError as error:
+                if error.code == 429:
+                    wait = error.retry_after if error.retry_after is not None else 10.0
+                    if waited + wait > self.max_wait:
+                        raise BackendError(
+                            "{} keeps refusing calls for the rate limit ({}); waited {:.0f} s. "
+                            "Try again later, use a faster model, or slow down.".format(
+                                self.url, error.server_message, waited
+                            )
+                        )
+                    self.notify(
+                        "Rate limit of {}: waiting {:.0f} s before retrying...".format(
+                            self.url, wait
+                        )
+                    )
+                    time.sleep(wait)
+                    waited += wait
+                    continue
+                if error.code == 401:
+                    raise BackendError(
+                        "{} rejected the API key ({}). Set it with api_key_file= or "
+                        "{}.".format(
+                            self.url,
+                            error.server_message,
+                            " or ".join(self.key_variables),
+                        )
+                    )
+                if error.code == 403:
+                    raise BackendError(
+                        "{} refused access ({}): the key may lack rights to this model, or "
+                        "the account may be blocked.".format(
+                            self.url, error.server_message
+                        )
+                    )
+                raise
+
     def check(self):
         if not self.model:
-            raise BackendError("The openai backend needs model=<name>")
+            raise BackendError("The {} backend needs model=<name>".format(self.name))
+        # A local server (llama.cpp, vLLM...) may run without a key.
+        local = re.match(r"https?://(localhost|127\.|\[::1\])", self.url)
+        if not self.key and not local:
+            raise BackendError(
+                "No API key for {}: put it in a file given as api_key_file=, or in "
+                "{}.".format(self.url, " or ".join(self.key_variables))
+            )
+        try:
+            listing = self._call("/models", timeout=30)
+        except HTTPError as error:
+            if error.code == 404:
+                return  # Servers without a model list: the first call will tell.
+            raise
+        names = [m.get("id") for m in listing.get("data", []) if isinstance(m, dict)]
+        if names and self.model not in names:
+            raise BackendError(
+                "Model <{}> is not offered by {}. Available: {}".format(
+                    self.model, self.url, ", ".join(sorted(n for n in names if n))
+                )
+            )
 
     def complete_json(self, system, messages, schema):
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}, *messages],
-            "temperature": 0,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "step", "schema": schema},
-            },
-        }
-        url = self.url + "/chat/completions"
-        try:
-            reply = _http_json(url, payload, self._headers(), self.timeout)
-        except BackendError as error:
-            # Older servers only know the plain JSON mode.
-            if "HTTP 400" not in str(error):
+        while True:
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "system", "content": system}, *messages],
+                "temperature": 0,
+            }
+            if self.mode == "json_schema":
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {"name": "step", "schema": schema},
+                }
+            elif self.mode == "json_object":
+                payload["response_format"] = {"type": "json_object"}
+            if self.mode != "json_schema":
+                payload["messages"][0] = {
+                    "role": "system",
+                    "content": system
+                    + "\n\nReply with one JSON object, without prose or code fence, "
+                    "following this JSON schema:\n" + json.dumps(schema),
+                }
+            try:
+                reply = self._call("/chat/completions", payload)
+            except HTTPError as error:
+                # A server that does not support this output mode says 400 or 422.
+                if error.code in (400, 422) and self.mode != self.modes[-1]:
+                    self.mode = self.modes[self.modes.index(self.mode) + 1]
+                    continue
                 raise
-            payload["response_format"] = {"type": "json_object"}
-            reply = _http_json(url, payload, self._headers(), self.timeout)
-        choices = reply.get("choices") or [{}]
-        return extract_json(choices[0].get("message", {}).get("content", ""))
+            choices = reply.get("choices") or [{}]
+            content = choices[0].get("message", {}).get("content") or ""
+            return extract_json(content)
 
     def embed(self, texts):
-        reply = _http_json(
-            self.url + "/embeddings",
-            {"model": self.embed_model, "input": texts},
-            self._headers(),
-            self.timeout,
-        )
+        reply = self._call("/embeddings", {"model": self.embed_model, "input": texts})
         return [item["embedding"] for item in reply.get("data", [])]
+
+
+class BlabladorBackend(OpenAIBackend):
+    """Blablador, the Helmholtz AI service at Jülich, open for research and teaching.
+
+    The key is a Helmholtz Codebase personal access token with the read_user
+    scope (https://sdlaml.pages.jsc.fz-juelich.de/ai/guides/blablador_api_access/).
+    Models are named by alias: alias-large (default), alias-fast, alias-code,
+    alias-huge; embeddings use alias-embeddings.
+    """
+
+    name = "blablador"
+    default_url = "https://api.blablador.fz-juelich.de/v1"
+    default_model = "alias-large"
+    default_embed_model = "alias-embeddings"
+    key_variables = ("BLABLADOR_API_KEY", "IAI_API_KEY")
 
 
 class ClaudeCodeBackend(Backend):
@@ -462,15 +622,18 @@ def _run_streaming(cmd, prompt, workdir, timeout, model):
     return "".join(chunks)
 
 
-def make_backend(name, model=None, url=None, timeout=300, embed_model=None):
+def make_backend(name, model=None, url=None, timeout=300, embed_model=None, key=None):
     """Return a backend instance by name.
 
     :param str name: One of BACKENDS
+    :param str key: API key for the openai and blablador backends
     """
     if name == "ollama":
         return OllamaBackend(model, url, timeout, embed_model)
     if name == "openai":
-        return OpenAIBackend(model, url, timeout, embed_model)
+        return OpenAIBackend(model, url, timeout, embed_model, key)
+    if name == "blablador":
+        return BlabladorBackend(model, url, timeout, embed_model, key)
     if name == "claude":
         return ClaudeCodeBackend(model, url, timeout)
     if name == "opencode":

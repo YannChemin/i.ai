@@ -40,10 +40,17 @@
 # % key: backend
 # % type: string
 # % required: no
-# % options: ollama,openai,claude,opencode
+# % options: ollama,openai,blablador,claude,opencode
 # % answer: ollama
 # % description: Language model backend
-# % descriptions: ollama;Local Ollama server;openai;OpenAI-compatible server (key in IAI_API_KEY or OPENAI_API_KEY);claude;Claude Code CLI on the logged-in account;opencode;OpenCode CLI (default model opencode/big-pickle, guest access)
+# % descriptions: ollama;Local Ollama server;openai;Any OpenAI-compatible server given by url= (key in api_key_file, IAI_API_KEY or OPENAI_API_KEY);blablador;Blablador, the Helmholtz AI service for research and teaching (key in api_key_file, BLABLADOR_API_KEY or IAI_API_KEY);claude;Claude Code CLI on the logged-in account;opencode;OpenCode CLI (default model opencode/big-pickle, guest access)
+# % guisection: Model
+# %end
+
+# %option G_OPT_F_INPUT
+# % key: api_key_file
+# % required: no
+# % description: File holding the API key of the openai or blablador backend (default: the key environment variables)
 # % guisection: Model
 # %end
 
@@ -234,17 +241,44 @@ from grass.exceptions import CalledModuleError
 
 def _load_library():
     """Make the i.ai helper modules importable, installed or in the source tree."""
+    # Library files next to the script (a source checkout) win over an
+    # installed copy, which may be older.
     here = os.path.dirname(os.path.realpath(__file__))
     candidates = [here]
     path = gs.utils.get_lib_path(modname="i.ai")
     if path:
-        candidates.insert(0, path)
+        candidates.append(path)
     for candidate in candidates:
         if os.path.isfile(os.path.join(candidate, "iai_agents.py")):
             if candidate not in sys.path:
                 sys.path.insert(0, candidate)
             return
     gs.fatal(_("Cannot find the i.ai library files (iai_*.py)"))
+
+
+def read_api_key(path):
+    """Return the API key stored in a file, or None when no file is given.
+
+    The key is read from a file, not given as an option, so it never lands
+    in the shell history or in map histories.
+    """
+    if not path:
+        return None
+    try:
+        mode = os.stat(path).st_mode
+        with open(path, encoding="utf-8") as handle:
+            key = handle.read().strip()
+    except OSError as error:
+        gs.fatal(_("Cannot read the API key file <{}>: {}").format(path, error))
+    if not key:
+        gs.fatal(_("The API key file <{}> is empty").format(path))
+    if mode & 0o077:
+        gs.warning(
+            _(
+                "The API key file <{}> can be read by other users; run chmod 600 on it"
+            ).format(path)
+        )
+    return key
 
 
 class Session:
@@ -291,7 +325,10 @@ class Session:
                 url=options["url"] or None,
                 timeout=int(options["timeout"]),
                 embed_model=options["embed_model"] or None,
+                key=read_api_key(options["api_key_file"]),
             )
+            # Rate-limit waits and similar notes from the backend.
+            self.backend.notify = gs.message
             try:
                 self.backend.check()
             except BackendError as error:

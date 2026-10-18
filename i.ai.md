@@ -24,8 +24,14 @@ prompt also lists the installed Python packages that scripts may import.
 The language model can be:
 
 - **ollama**: a local [Ollama](https://ollama.com) server;
-- **openai**: any OpenAI-compatible server (OpenAI, llama.cpp server,
-  vLLM, LM Studio...), with the key in `IAI_API_KEY` or `OPENAI_API_KEY`;
+- **openai**: any OpenAI-compatible server given by **url** (OpenAI,
+  llama.cpp server, vLLM, LM Studio, academic services...), with its key
+  in a file given as **api\_key\_file**, or in `IAI_API_KEY` or
+  `OPENAI_API_KEY`;
+- **blablador**: [Blablador](https://sdlaml.pages.jsc.fz-juelich.de/ai/guides/blablador_api_access/),
+  the Helmholtz AI service at Jülich, open for research and teaching
+  (default model `alias-large`), with its key in **api\_key\_file**,
+  `BLABLADOR_API_KEY` or `IAI_API_KEY`;
 - **claude**: [Claude Code](https://claude.com/claude-code) on the
   user's logged-in account (the `claude` command), with no API key;
 - **opencode**: [OpenCode](https://opencode.ai), by default with the free
@@ -221,6 +227,32 @@ can pick the speaker's native language and transcribe an English request
 in French. The prompt passed to whisper holds GRASS
 terms and the session's map names, so they are heard as such.
 
+### API keys and OpenAI-compatible services
+
+The **openai** and **blablador** backends need an API key, except for a
+server on this machine (`localhost`). The key is read from the file given
+as **api\_key\_file**, else from the environment variables listed above;
+it is never an option value, so it does not end up in the shell history.
+*i.ai* warns when the key file can be read by other users.
+
+At start, *i.ai* checks the key and the model against the server's model
+list: a rejected key, refused access, or a model the server does not
+offer (with the list of those it does) stops it with the reason. Calls
+refused for the rate limit (HTTP 429) are retried after the wait the
+server asks for, up to three minutes per call, with a message. Structured
+output is asked as a JSON schema; a server that does not support it gets
+JSON mode, then the schema in the prompt, and the level that works is
+kept for the session. Reasoning output (`<think>...</think>`) is ignored.
+
+For Blablador, the key is a personal access token of
+[Helmholtz Codebase](https://codebase.helmholtz.cloud) with the
+`read_user` scope, valid for up to a year. Its models are named by
+alias: `alias-large` (default, balanced), `alias-fast`, `alias-code` and
+`alias-huge`; `alias-embeddings` serves **operation=index**. Its rate
+limits are per model and user (for example 10 requests per minute on
+`alias-large` for external users); as each request to *i.ai* takes
+several model calls, a class may prefer `alias-fast`.
+
 ### Sessions and output
 
 With **session**, the dialog history and the last plan are saved under
@@ -305,6 +337,14 @@ Use an OpenAI-compatible server, here a local llama.cpp server:
 
 ```sh
 i.ai backend=openai url=http://localhost:8080/v1 model=qwen3 query="..."
+```
+
+Use Blablador, with the key kept in a private file:
+
+```sh
+chmod 600 ~/.blablador_key
+i.ai -i backend=blablador api_key_file=~/.blablador_key
+i.ai -i backend=blablador model=alias-fast api_key_file=~/.blablador_key
 ```
 
 Write a report pipeline in a dated report folder, run it end to end, and

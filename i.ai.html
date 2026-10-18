@@ -20,8 +20,14 @@ prompt also lists the installed Python packages that scripts may import.</p>
 <p>The language model can be:</p>
 <ul>
 <li><strong>ollama</strong>: a local <a href="https://ollama.com">Ollama</a> server;</li>
-<li><strong>openai</strong>: any OpenAI-compatible server (OpenAI, llama.cpp server,
-  vLLM, LM Studio...), with the key in <code>IAI_API_KEY</code> or <code>OPENAI_API_KEY</code>;</li>
+<li><strong>openai</strong>: any OpenAI-compatible server given by <strong>url</strong> (OpenAI,
+  llama.cpp server, vLLM, LM Studio, academic services...), with its key
+  in a file given as <strong>api_key_file</strong>, or in <code>IAI_API_KEY</code> or
+  <code>OPENAI_API_KEY</code>;</li>
+<li><strong>blablador</strong>: <a href="https://sdlaml.pages.jsc.fz-juelich.de/ai/guides/blablador_api_access/">Blablador</a>,
+  the Helmholtz AI service at Jülich, open for research and teaching
+  (default model <code>alias-large</code>), with its key in <strong>api_key_file</strong>,
+  <code>BLABLADOR_API_KEY</code> or <code>IAI_API_KEY</code>;</li>
 <li><strong>claude</strong>: <a href="https://claude.com/claude-code">Claude Code</a> on the
   user's logged-in account (the <code>claude</code> command), with no API key;</li>
 <li><strong>opencode</strong>: <a href="https://opencode.ai">OpenCode</a>, by default with the free
@@ -204,6 +210,28 @@ detection is not the default because it is unreliable with an accent: it
 can pick the speaker's native language and transcribe an English request
 in French. The prompt passed to whisper holds GRASS
 terms and the session's map names, so they are heard as such.</p>
+<h3>API keys and OpenAI-compatible services</h3>
+<p>The <strong>openai</strong> and <strong>blablador</strong> backends need an API key, except for a
+server on this machine (<code>localhost</code>). The key is read from the file given
+as <strong>api_key_file</strong>, else from the environment variables listed above;
+it is never an option value, so it does not end up in the shell history.
+<em>i.ai</em> warns when the key file can be read by other users.</p>
+<p>At start, <em>i.ai</em> checks the key and the model against the server's model
+list: a rejected key, refused access, or a model the server does not
+offer (with the list of those it does) stops it with the reason. Calls
+refused for the rate limit (HTTP 429) are retried after the wait the
+server asks for, up to three minutes per call, with a message. Structured
+output is asked as a JSON schema; a server that does not support it gets
+JSON mode, then the schema in the prompt, and the level that works is
+kept for the session. Reasoning output (<code>&lt;think&gt;...&lt;/think&gt;</code>) is ignored.</p>
+<p>For Blablador, the key is a personal access token of
+<a href="https://codebase.helmholtz.cloud">Helmholtz Codebase</a> with the
+<code>read_user</code> scope, valid for up to a year. Its models are named by
+alias: <code>alias-large</code> (default, balanced), <code>alias-fast</code>, <code>alias-code</code> and
+<code>alias-huge</code>; <code>alias-embeddings</code> serves <strong>operation=index</strong>. Its rate
+limits are per model and user (for example 10 requests per minute on
+<code>alias-large</code> for external users); as each request to <em>i.ai</em> takes
+several model calls, a class may prefer <code>alias-fast</code>.</p>
 <h3>Sessions and output</h3>
 <p>With <strong>session</strong>, the dialog history and the last plan are saved under
 <code>$XDG_DATA_HOME/i.ai/sessions/</code> (by default <code>~/.local/share/i.ai/</code>), so a
@@ -265,6 +293,11 @@ i.ai backend=claude session=wake query=&quot;Now keep only basins larger than 1 
 </pre></div>
 <p>Use an OpenAI-compatible server, here a local llama.cpp server:</p>
 <div class="code"><pre>i.ai backend=openai url=http://localhost:8080/v1 model=qwen3 query=&quot;...&quot;
+</pre></div>
+<p>Use Blablador, with the key kept in a private file:</p>
+<div class="code"><pre>chmod 600 ~/.blablador_key
+i.ai -i backend=blablador api_key_file=~/.blablador_key
+i.ai -i backend=blablador model=alias-fast api_key_file=~/.blablador_key
 </pre></div>
 <p>Write a report pipeline in a dated report folder, run it end to end, and
 compile the PDF:</p>
